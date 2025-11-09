@@ -195,6 +195,55 @@ def get_channel_sales_cypy_query(yyyymm, yyyymm_py, brd_cd):
     ORDER BY pst_yyyymm DESC, in_yymm_rnk, in_chnl_rnk
     """
 
+def get_gender_purchase_pattern_query(yyyymm, yyyymm_py, brd_cd):
+    """성별 구매 패턴 분석 쿼리 (당해/전년 동월 비교) - 4-1-3-1용"""
+    # 년월을 날짜로 변환
+    current_year = int(yyyymm[:4])
+    current_month = int(yyyymm[4:6])
+    previous_year = int(yyyymm_py[:4])
+    previous_month = int(yyyymm_py[4:6])
+    
+    current_start = f"{current_year}-{current_month:02d}-01"
+    current_end = f"{current_year}-{current_month:02d}-{28 if current_month == 2 else 30 if current_month in [4,6,9,11] else 31}"
+    previous_start = f"{previous_year}-{previous_month:02d}-01"
+    previous_end = f"{previous_year}-{previous_month:02d}-{28 if previous_month == 2 else 30 if previous_month in [4,6,9,11] else 31}"
+    
+    return f"""
+    SELECT
+      TO_CHAR(a.PST_DT, 'YYYY-MM') AS YYYY_MM,
+      b.SEX_NM,
+      PRDT_HRRC1_NM,
+      PRDT_HRRC2_NM,
+      PRDT_HRRC3_NM,
+      SUM(a.SALE_QTY) AS SALE_QTY,
+      SUM(a.ACT_SALE_AMT) AS ACT_SALE_AMT
+    FROM sap_fnf.dw_copa_d a
+    JOIN sap_fnf.mst_prdt b
+      ON a.prdt_cd = b.prdt_cd
+    WHERE a.CHNL_CD NOT IN ('0','8','9','99')
+      AND a.PRDT_CD IS NOT NULL
+      AND a.PRDT_CD <> ''
+      AND (
+        a.PST_DT BETWEEN '{previous_start}' AND '{previous_end}'
+        OR a.PST_DT BETWEEN '{current_start}' AND '{current_end}'
+      )
+      AND a.BRD_CD = '{brd_cd}'
+      AND a.ACT_SALE_AMT <> 0
+    GROUP BY
+      TO_CHAR(a.PST_DT, 'YYYY-MM'),
+      b.SEX_NM,
+      PRDT_HRRC1_NM,
+      PRDT_HRRC2_NM,
+      PRDT_HRRC3_NM
+    ORDER BY
+      YYYY_MM,
+      b.SEX_NM,
+      PRDT_HRRC1_NM,
+      PRDT_HRRC2_NM,
+      PRDT_HRRC3_NM
+    """
+
+
 def get_channel_sales_query(yyyymm_start, yyyymm_end, brd_cd):
     """채널별 매출 분석 쿼리 (12개월 추이)"""
     return f"""
@@ -287,6 +336,8 @@ def get_ad_expense_trend_query(trend_months, brd_cd):
     GROUP BY PST_YYYYMM, CTGR2, CTGR3, GL_NM
     ORDER BY PST_YYYYMM, TTL_USE_AMT DESC
     """
+
+
 
 # ============================================================================
 # 분석 함수
@@ -859,6 +910,321 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
     finally:
         engine.dispose()
 
+def analyze_gender_purchase_pattern(yyyymm, brd_cd):
+    """성별 구매 패턴 분석 (당해/전년 동월 비교) - 4-1-3-1"""
+    print(f"\n{'='*60}")
+    print(f"성별 구매 패턴 분석 시작: {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
+    print(f"{'='*60}")
+    
+    # DB 연결
+    engine = get_db_engine()
+    
+    try:
+        # 분석 기간 계산 (당해/전년 동월)
+        current_year = int(yyyymm[:4])
+        current_month = int(yyyymm[4:6])
+        previous_year = current_year - 1
+        yyyymm_py = f"{previous_year:04d}{current_month:02d}"
+        
+        print(f"분석 기간: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월")
+        
+        # SQL 쿼리 실행
+        sql = get_gender_purchase_pattern_query(yyyymm, yyyymm_py, brd_cd)
+        df = run_query(sql, engine)
+        records = df.to_dicts()
+        
+        if not records:
+            print("데이터가 없습니다.")
+            return None
+        
+        # 데이터 요약
+        total_sales = sum(float(r.get('ACT_SALE_AMT', 0)) for r in records)
+        total_qty = sum(float(r.get('SALE_QTY', 0)) for r in records)
+        unique_genders = len(set(r.get('SEX_NM', '') for r in records))
+        unique_categories = len(set(r.get('PRDT_HRRC1_NM', '') for r in records))
+        unique_items = len(set(r.get('PRDT_HRRC3_NM', '') for r in records))
+        unique_months = len(set(r.get('YYYY_MM', '') for r in records))
+        
+        print(f"총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)")
+        print(f"총 판매수량: {total_qty:,.0f}개")
+        print(f"성별 수: {unique_genders}개")
+        print(f"카테고리 수: {unique_categories}개")
+        print(f"아이템 수: {unique_items}개")
+        print(f"분석 월 수: {unique_months}개월")
+        
+        # 성별별 요약 데이터 생성
+        gender_summary = {}
+        for record in records:
+            sex_nm = record.get('SEX_NM', '기타')
+            month = record.get('YYYY_MM', '')
+            sale_amt = float(record.get('ACT_SALE_AMT', 0))
+            sale_qty = float(record.get('SALE_QTY', 0))
+            
+            if sex_nm not in gender_summary:
+                gender_summary[sex_nm] = {
+                    'total_sales': 0,
+                    'total_qty': 0,
+                    'months': {},
+                    'top_items': []
+                }
+            
+            gender_summary[sex_nm]['total_sales'] += sale_amt
+            gender_summary[sex_nm]['total_qty'] += sale_qty
+            
+            if month not in gender_summary[sex_nm]['months']:
+                gender_summary[sex_nm]['months'][month] = {'sales': 0, 'qty': 0}
+            gender_summary[sex_nm]['months'][month]['sales'] += sale_amt
+            gender_summary[sex_nm]['months'][month]['qty'] += sale_qty
+        
+        # 성별별 상위 아이템 추출
+        item_sales_by_gender = {}
+        for record in records:
+            sex_nm = record.get('SEX_NM', '기타')
+            class3 = record.get('PRDT_HRRC3_NM', '기타')
+            sale_amt = float(record.get('ACT_SALE_AMT', 0))
+            
+            key = f"{sex_nm}|{class3}"
+            if key not in item_sales_by_gender:
+                item_sales_by_gender[key] = {
+                    'sex_nm': sex_nm,
+                    'class3': class3,
+                    'total_sales': 0
+                }
+            item_sales_by_gender[key]['total_sales'] += sale_amt
+        
+        # 성별별로 상위 5개 아이템 추출
+        for sex_nm in gender_summary.keys():
+            gender_items = [
+                item for key, item in item_sales_by_gender.items()
+                if item['sex_nm'] == sex_nm
+            ]
+            gender_items.sort(key=lambda x: x['total_sales'], reverse=True)
+            gender_summary[sex_nm]['top_items'] = [
+                {
+                    'class3': item['class3'],
+                    'total_sales': round(item['total_sales'] / 1000000, 2)
+                }
+                for item in gender_items[:5]
+            ]
+            gender_summary[sex_nm]['total_sales'] = round(
+                gender_summary[sex_nm]['total_sales'] / 1000000, 2
+            )
+            gender_summary[sex_nm]['total_qty'] = round(
+                gender_summary[sex_nm]['total_qty'], 0
+            )
+        
+        # 월별 합계 계산
+        monthly_totals = {}
+        for record in records:
+            month = record.get('YYYY_MM', '')
+            sale_amt = float(record.get('ACT_SALE_AMT', 0))
+            if month not in monthly_totals:
+                monthly_totals[month] = 0
+            monthly_totals[month] += sale_amt
+        
+        monthly_totals_list = [
+            {'yyyymm': month, 'total_amount': round(amount / 1000000, 2)}
+            for month, amount in sorted(monthly_totals.items())
+        ]
+        
+        # 성별별로 당해/전년 데이터 존재 여부 확인
+        gender_data_check = {}
+        for record in records:
+            sex_nm = record.get('SEX_NM', '기타')
+            month = record.get('YYYY_MM', '').replace('-', '')
+            
+            if sex_nm not in gender_data_check:
+                gender_data_check[sex_nm] = {
+                    'has_current': False,
+                    'has_previous': False
+                }
+            
+            if month == yyyymm:
+                gender_data_check[sex_nm]['has_current'] = True
+            elif month == yyyymm_py:
+                gender_data_check[sex_nm]['has_previous'] = True
+        
+        # 당해/전년 데이터가 모두 있는 성별만 필터링
+        valid_genders = [
+            gender for gender, check in gender_data_check.items()
+            if check['has_current'] and check['has_previous']
+        ]
+        
+        # 성별별 데이터 요약 (당해/전년 비교용)
+        gender_comparison = {}
+        for sex_nm in valid_genders:
+            current_data = [r for r in records if r.get('SEX_NM') == sex_nm and r.get('YYYY_MM', '').replace('-', '') == yyyymm]
+            previous_data = [r for r in records if r.get('SEX_NM') == sex_nm and r.get('YYYY_MM', '').replace('-', '') == yyyymm_py]
+            
+            # 성별별 TOP 3 아이템 (당해 기준)
+            current_items = sorted(current_data, key=lambda x: float(x.get('ACT_SALE_AMT', 0)), reverse=True)[:3]
+            
+            gender_comparison[sex_nm] = {
+                'current_top3': [
+                    {
+                        'prdt_hrrc1_nm': item.get('PRDT_HRRC1_NM', ''),
+                        'prdt_hrrc2_nm': item.get('PRDT_HRRC2_NM', ''),
+                        'prdt_hrrc3_nm': item.get('PRDT_HRRC3_NM', ''),
+                        'sale_amt': round(float(item.get('ACT_SALE_AMT', 0)) / 1000000, 2),
+                        'sale_qty': float(item.get('SALE_QTY', 0))
+                    }
+                    for item in current_items
+                ],
+                'current_total': round(sum(float(r.get('ACT_SALE_AMT', 0)) for r in current_data) / 1000000, 2),
+                'previous_total': round(sum(float(r.get('ACT_SALE_AMT', 0)) for r in previous_data) / 1000000, 2)
+            }
+        
+        # 성별별 섹션 템플릿 생성
+        gender_sections_template = ',\n    '.join([
+            '{{\n      "sub_title": "{gender} 제품별 성별 구매 패턴 분석",\n      "ai_text": "각 {gender} 당해 당월 성별 제품 구매 패턴 분석을 해줘. 전년과 달라진 점도 분석해줘. (예: • 남성 고객은 아우터에 대한 구매 비중이 45.2%로 가장 높으며, 전년(43.1%) 대비 +2.1%p 상승하여 아우터 선호도가 강화되는 추세입니다. ACC 카테고리에서는 모자(36.5%)가 가장 인기 있으며 전년(32.8%) 대비 +3.7%p 증가했습니다. 계절성 아우터 상품 라인업 강화와 모자 신상품 출시를 통한 매출 확대 기회가 있습니다.)"\n    }}'.format(gender=gender)
+            for gender in valid_genders
+        ])
+        
+        # LLM 프롬프트 생성 (JSON 형식 응답 요청)
+        prompt = f"""
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 각 제품별 당해 당월 성별 제품 구매 패턴 분석을 해줘.
+
+**분석 기간**
+- 당해: {current_year}년 {current_month}월 ({yyyymm})
+- 전년: {previous_year}년 {current_month}월 ({yyyymm_py})
+
+**전체 요약**
+- 총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)
+- 총 판매수량: {total_qty:,.0f}개
+- 분석 가능한 성별 수: {len(valid_genders)}개
+- 분석 성별 목록: {', '.join(valid_genders)}
+- 분석 아이템 수: {unique_items}개
+
+**성별별 데이터 요약**
+{json.dumps(gender_comparison, ensure_ascii=False, indent=2)}
+
+<분석 목표>
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 당해 당월 성별 제품 구매 패턴 분석을 해줘. 전년과 달라진 점도 분석해줘.
+
+**중요**: 위 "성별별 데이터 요약"에 있는 성별만 분석하면 됩니다. 데이터가 없는 성별은 분석하지 마세요.
+
+<데이터 샘플>
+{json.dumps(records[:200], ensure_ascii=False, indent=2)}
+
+<요구사항>
+아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+
+각 성별별로 하나의 섹션을 만들어야 합니다. 성별 목록: {', '.join(valid_genders)}
+
+{{
+  "title": "제품별 성별 구매 패턴 분석 (당해 전년 주요변화)",
+  "sections": [
+    {gender_sections_template}
+  ]
+}}
+
+<작성 가이드라인>
+- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
+- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+- 당해 제품별 성별 구매 패턴 분석
+- 전년대비 주요 변화 분석
+- 단기 전략 방향과 중장기 전략 방향을 구체적으로 시사
+- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
+- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
+- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
+- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
+- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
+
+위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+"""
+        
+        # LLM 호출 (JSON 응답)
+        analysis_response = call_llm(prompt, max_tokens=4000)
+        
+        # JSON 파싱 (마크다운 코드 블록 제거)
+        analysis_response = analysis_response.strip()
+        if analysis_response.startswith('```json'):
+            analysis_response = analysis_response[7:]
+        if analysis_response.startswith('```'):
+            analysis_response = analysis_response[3:]
+        if analysis_response.endswith('```'):
+            analysis_response = analysis_response[:-3]
+        analysis_response = analysis_response.strip()
+        
+        try:
+            analysis_data = json.loads(analysis_response)
+        except json.JSONDecodeError as e:
+            print(f"[WARNING] JSON 파싱 실패: {e}")
+            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
+            # 기본 구조로 대체
+            analysis_data = {
+                "title": "성별 구매 패턴 분석 (당해 전년 주요변화)",
+                "sections": [
+                    {"sub_title": "분석 결과", "ai_text": analysis_response}
+                ]
+            }
+        
+        # JSON 데이터 생성
+        json_data = {
+            'brand_cd': brd_cd,
+            'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
+            'yyyymm': yyyymm,
+            'yyyymm_py': yyyymm_py,
+            'analysis_data': analysis_data,
+            'summary': {
+                'total_sales': round(total_sales / 1000000, 2),
+                'total_qty': round(total_qty, 0),
+                'unique_genders': unique_genders,
+                'unique_categories': unique_categories,
+                'unique_items': unique_items,
+                'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
+            },
+            'gender_summary': gender_summary,
+            'raw_data': {
+                'sample_records': [
+                    {
+                        'YYYY_MM': r.get('YYYY_MM', ''),
+                        'SEX_NM': r.get('SEX_NM', ''),
+                        'PRDT_HRRC1_NM': r.get('PRDT_HRRC1_NM', ''),
+                        'PRDT_HRRC2_NM': r.get('PRDT_HRRC2_NM', ''),
+                        'PRDT_HRRC3_NM': r.get('PRDT_HRRC3_NM', ''),
+                        'SALE_QTY': float(r.get('SALE_QTY', 0)),
+                        'ACT_SALE_AMT': float(r.get('ACT_SALE_AMT', 0))
+                    }
+                    for r in records[:50]
+                ],
+                'total_records_count': len(records)
+            },
+            'trend_data': {
+                'trend_months': sorted(list(set(r.get('YYYY_MM', '') for r in records))),
+                'monthly_totals': monthly_totals_list,
+                'monthly_details': [
+                    {
+                        'yyyymm': r.get('YYYY_MM', ''),
+                        'sex_nm': r.get('SEX_NM', ''),
+                        'prdt_hrrc1_nm': r.get('PRDT_HRRC1_NM', ''),
+                        'prdt_hrrc2_nm': r.get('PRDT_HRRC2_NM', ''),
+                        'prdt_hrrc3_nm': r.get('PRDT_HRRC3_NM', ''),
+                        'sale_qty': float(r.get('SALE_QTY', 0)),
+                        'sale_amt': round(float(r.get('ACT_SALE_AMT', 0)) / 1000000, 2)
+                    }
+                    for r in records
+                ]
+            }
+        }
+        
+        # 파일 저장
+        filename = f"4-1-3-1.{brd_cd}_성별_구매패턴_분석(당해_전년_주요변화)"
+        save_json(json_data, filename)
+        
+        # Markdown도 저장 (analysis_data의 sections를 조합)
+        markdown_content = f"# {analysis_data.get('title', '성별 구매 패턴 분석')}\n\n"
+        for section in analysis_data.get('sections', []):
+            markdown_content += f"## {section.get('sub_title', '')}\n\n"
+            markdown_content += f"{section.get('ai_text', '')}\n\n"
+        save_markdown(markdown_content, filename)
+        
+        print(f"[OK] 분석 완료!\n")
+        return json_data
+        
+    finally:
+        engine.dispose()
+
 def analyze_ad_expense(yyyymm, brd_cd):
     """광고선전비 추이 분석"""
     print(f"\n{'='*60}")
@@ -1170,6 +1536,7 @@ if __name__ == '__main__':
     brd_cd = 'M'       # 브랜드 코드
     
     # 분석 실행 (원하는 분석만 주석 해제)
-    analyze_channel_sales(yyyymm, brd_cd)  # 채널별 매출 분석 (4-1-1-1)
-    analyze_channel_sales_overall(yyyymm, brd_cd)  # 채널별 매출 종합분석 (4-1-1-2)
-    analyze_ad_expense(yyyymm, brd_cd)  # 광고선전비 추이 분석(6-1-1-1)
+    # analyze_channel_sales(yyyymm, brd_cd)  # 채널별 TOP3 매출 분석 (4-1-1-1)
+    # analyze_channel_sales_overall(yyyymm, brd_cd)  # 채널별 매출 종합분석 (4-1-1-2)
+    analyze_gender_purchase_pattern(yyyymm, brd_cd)  # 성별 구매 패턴 분석 (4-1-3-1)
+    # analyze_ad_expense(yyyymm, brd_cd)  # 광고선전비 추이 분석(6-1-1-1)
