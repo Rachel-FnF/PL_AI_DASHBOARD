@@ -16,7 +16,8 @@ ENV/
 # 출력 파일
 output/
 *.json
-*.md
+# README.md는 제외하지 않음
+output/**/*.md
 
 # IDE
 .vscode/
