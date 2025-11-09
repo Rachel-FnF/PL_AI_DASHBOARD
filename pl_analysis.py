@@ -397,46 +397,87 @@ def analyze_channel_sales(yyyymm, brd_cd):
             for month, amount in sorted(monthly_totals.items())
         ]
         
+        # 채널별로 당해/전년 데이터 존재 여부 확인
+        channel_data_check = {}
+        for record in records:
+            chnl_nm = record.get('CHNL_NM', '기타')
+            month = record.get('PST_YYYYMM', '')
+            
+            if chnl_nm not in channel_data_check:
+                channel_data_check[chnl_nm] = {
+                    'has_current': False,
+                    'has_previous': False
+                }
+            
+            if month == yyyymm:
+                channel_data_check[chnl_nm]['has_current'] = True
+            elif month == yyyymm_py:
+                channel_data_check[chnl_nm]['has_previous'] = True
+        
+        # 당해/전년 데이터가 모두 있는 채널만 필터링
+        valid_channels = [
+            chnl for chnl, check in channel_data_check.items()
+            if check['has_current'] and check['has_previous']
+        ]
+        
+        # 채널별 데이터 요약 (당해/전년 비교용)
+        channel_comparison = {}
+        for chnl_nm in valid_channels:
+            current_data = [r for r in records if r.get('CHNL_NM') == chnl_nm and r.get('PST_YYYYMM') == yyyymm]
+            previous_data = [r for r in records if r.get('CHNL_NM') == chnl_nm and r.get('PST_YYYYMM') == yyyymm_py]
+            
+            # 채널별 TOP 3 아이템 (당해 기준)
+            current_items = sorted(current_data, key=lambda x: float(x.get('SALE_AMT', 0)), reverse=True)[:3]
+            
+            channel_comparison[chnl_nm] = {
+                'current_top3': [
+                    {
+                        'class3': item.get('CLASS3', ''),
+                        'sale_amt': round(float(item.get('SALE_AMT', 0)) / 1000000, 2),
+                        'sale_ratio': float(item.get('SALE_RATIO', 0))
+                    }
+                    for item in current_items
+                ],
+                'current_total': round(sum(float(r.get('SALE_AMT', 0)) for r in current_data) / 1000000, 2),
+                'previous_total': round(sum(float(r.get('SALE_AMT', 0)) for r in previous_data) / 1000000, 2)
+            }
+        
         # LLM 프롬프트 생성 (JSON 형식 응답 요청)
         prompt = f"""
 너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 각 채널별 당해 당월 매출 베스트 아이템 3개를 전년대비 주요변화로 분석해줘.
 
 **분석 기간**
-- 당해: {current_year}년 {current_month}월
-- 전년: {previous_year}년 {current_month}월
+- 당해: {current_year}년 {current_month}월 ({yyyymm})
+- 전년: {previous_year}년 {current_month}월 ({yyyymm_py})
 
 **전체 요약**
 - 총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)
-- 분석 채널 수: {unique_channels}개
+- 분석 가능한 채널 수: {len(valid_channels)}개
+- 분석 채널 목록: {', '.join(valid_channels)}
 - 분석 아이템 수: {unique_items}개
 
+**채널별 데이터 요약**
+{json.dumps(channel_comparison, ensure_ascii=False, indent=2)}
+
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매출 베스트 아이템 3개를 전년대비 주요변화로 분석해줘 : (예: • 신상 캡: 당해 신규 볼캡 아이템 도입으로 +156.3% 폭증)
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매출 베스트 아이템 3개를 전년대비 주요변화로 분석해줘.
 
-1. 플래그쉽 베스트 아이템 전년 대비 주요 변화
-2. 백화점 베스트 아이템 전년 대비 주요 변화
-3. 대리점 베스트 아이템 전년 대비 주요 변화
-4. 면세점 베스트 아이템 전년 대비 주요 변화
-5. 직영점 베스트 아이템 전년 대비 주요 변화
-6. 제휴몰 베스트 아이템 전년 대비 주요 변화
-7. 자사몰 베스트 아이템 전년 대비 주요 변화
-8. RF 베스트 아이템 전년 대비 주요 변화
-9. 아울렛 베스트 아이템 전년 대비 주요 변화
-
+**중요**: 위 "채널별 데이터 요약"에 있는 채널만 분석하면 됩니다. 데이터가 없는 채널은 분석하지 마세요.
 
 <데이터 샘플>
-{json.dumps(records[:100], ensure_ascii=False, indent=2)}
+{json.dumps(records[:200], ensure_ascii=False, indent=2)}
 
 <요구사항>
 아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+
+각 채널별로 하나의 섹션을 만들어야 합니다. 채널 목록: {', '.join(valid_channels)}
 
 {{
   "title": "채널별 매출 top3 분석 (당해 전년 주요변화)",
   "sections": [
     {{
-      "sub_title": "{채널명} 저년대비 주요 변화 AI ",
-      "ai_text": "각 {채널명} 당해 당월 매출 베스트 아이템 3개를 한 줄씩 전년대비 주요변화로 분석해줘 : 
-                  (예: • 운동모: 당해 신규 D핏 언스트럭쳐 볼캡 제품 +156.3% 폭증 /n • 숄더백: 클래식 모노그램 뉴 엠보 성수/한남점 폭발적 반응 +145.2% /n • 햇 : 고딕버킷햇 제품 폭발적 성장 +120.1% /n 등)"
+      "sub_title": "{{채널명}} 전년대비 주요 변화",
+      "ai_text": "각 {{채널명}} 당해 당월 매출 베스트 아이템 3개를 한 줄씩 전년대비 주요변화로 분석해줘. 채널별 데이터 요약의 current_top3와 current_total, previous_total을 참고하여 구체적인 변화율과 원인을 분석해줘. (예: • 운동모: 당해 신규 D핏 언스트럭쳐 볼캡 제품 +156.3% 폭증\\n • 숄더백: 클래식 모노그램 뉴 엠보 성수/한남점 폭발적 반응 +145.2%\\n • 햇 : 고딕버킷햇 제품 폭발적 성장 +120.1% 등)"
     }}
   ]
 }}
