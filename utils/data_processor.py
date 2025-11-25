@@ -56,3 +56,7 @@ def format_amount_million(amount):
     """
     return round(float(amount) / 1000000, 2)
 
+
+
+
+

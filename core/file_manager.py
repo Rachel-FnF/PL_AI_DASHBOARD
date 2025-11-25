@@ -123,3 +123,7 @@ class FileManager:
         except Exception as e:
             raise Exception(f"파일 읽기 실패 ({filename}): {e}")
 
+
+
+
+
