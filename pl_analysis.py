@@ -150,9 +150,25 @@ def reset_token_counter():
 # ============================================================================
 def save_markdown(content, filename):
     """Markdown 파일 저장"""
+    # KEY, sub_key, country 추출
+    key, sub_key, country = extract_key_from_filename(filename)
+    
+    # YAML frontmatter 추가
+    frontmatter_lines = ["---"]
+    if key:
+        frontmatter_lines.append(f"key: {key}")
+    if sub_key:
+        frontmatter_lines.append(f"sub_key: {sub_key}")
+    frontmatter_lines.append(f"country: {country}")
+    frontmatter_lines.append("---")
+    frontmatter = "\n".join(frontmatter_lines) + "\n\n"
+    
+    # content 앞에 frontmatter 추가
+    full_content = frontmatter + content
+    
     file_path = os.path.join(OUTPUT_MD_PATH, f"{filename}.md")
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(full_content)
     print(f"[OK] Markdown 저장: {file_path}")
     return file_path
 
@@ -167,8 +183,104 @@ def json_dumps_safe(obj, **kwargs):
     """Decimal 타입을 안전하게 처리하는 json.dumps 래퍼"""
     return json.dumps(obj, cls=DecimalEncoder, **kwargs)
 
+def extract_key_from_filename(filename):
+    """
+    파일명에서 KEY와 sub_key를 추출 (브랜드 코드 제외)
+    
+    파일명 형식: KR_{yyyymm_short}_{brd_cd}_{분석타입}_{세부분석}
+    예시: KR_2509_M_실판매출_채널별매출분석
+    
+    Returns:
+        tuple: (key, sub_key, country)
+        - key: 분석타입만 (예: 실판매출)
+        - sub_key: 세부분석만 (예: 채널별매출분석)
+        - country: KR
+    """
+    # KR_2509_M_실판매출_채널별매출분석 형식
+    parts = filename.split('_')
+    if len(parts) < 4:
+        return None, None, 'KR'
+    
+    # KR 제거하고 나머지 부분 사용
+    if parts[0] == 'KR':
+        parts = parts[1:]  # ['2509', 'M', '실판매출', '채널별매출분석']
+    
+    if len(parts) < 3:
+        return None, None, 'KR'
+    
+    # yyyymm_short, brd_cd, 나머지
+    analysis_parts = parts[2:]  # ['실판매출', '채널별매출분석']
+    
+    if len(analysis_parts) == 0:
+        return None, None, 'KR'
+    
+    # KEY: 첫번째 분석타입만 (브랜드 코드 제외)
+    key = analysis_parts[0]  # '실판매출'
+    
+    # sub_key: 두번째부터 끝까지 (브랜드 코드 제외)
+    if len(analysis_parts) > 1:
+        sub_key = '_'.join(analysis_parts[1:])  # '채널별매출분석'
+    else:
+        sub_key = None
+    
+    return key, sub_key, 'KR'
+
 def save_json(data, filename):
-    """JSON 파일 저장"""
+    """JSON 파일 저장 - 필드 순서: country, brand_cd, brand_name, yyyymm, yyyymm_py, key, sub_key, analysis_data, ..."""
+    # KEY, sub_key, country 추출
+    key, sub_key, country = extract_key_from_filename(filename)
+    
+    # JSON 데이터에 KEY, sub_key, country 추가 (지정된 순서로)
+    if isinstance(data, dict):
+        # 순서를 보장하기 위해 OrderedDict 사용
+        from collections import OrderedDict
+        new_data = OrderedDict()
+        
+        # 1. country (항상 첫 번째)
+        if 'country' in data:
+            new_data['country'] = data['country']
+        elif country:
+            new_data['country'] = country
+        
+        # 2. brand_cd
+        if 'brand_cd' in data:
+            new_data['brand_cd'] = data['brand_cd']
+        
+        # 3. brand_name
+        if 'brand_name' in data:
+            new_data['brand_name'] = data['brand_name']
+        
+        # 4. yyyymm
+        if 'yyyymm' in data:
+            new_data['yyyymm'] = data['yyyymm']
+        
+        # 5. yyyymm_py
+        if 'yyyymm_py' in data:
+            new_data['yyyymm_py'] = data['yyyymm_py']
+        
+        # 6. key
+        if 'key' in data:
+            new_data['key'] = data['key']
+        elif key:
+            new_data['key'] = key
+        
+        # 7. sub_key
+        if 'sub_key' in data:
+            new_data['sub_key'] = data['sub_key']
+        elif sub_key:
+            new_data['sub_key'] = sub_key
+        
+        # 8. analysis_data
+        if 'analysis_data' in data:
+            new_data['analysis_data'] = data['analysis_data']
+        
+        # 나머지 필드들 (summary, channel_summary, raw_data 등)
+        for k, v in data.items():
+            if k not in ['country', 'brand_cd', 'brand_name', 'yyyymm', 'yyyymm_py', 'key', 'sub_key', 'analysis_data']:
+                new_data[k] = v
+        
+        data = dict(new_data)  # OrderedDict를 일반 dict로 변환 (Python 3.7+에서는 순서 보장)
+    
     file_path = os.path.join(OUTPUT_JSON_PATH, f"{filename}.json")
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, cls=DecimalEncoder)
@@ -522,7 +634,7 @@ def get_ad_expense_trend_query(trend_months, brd_cd, ctgr1=None):
 # 분석 함수
 # ============================================================================
 def analyze_channel_sales(yyyymm, brd_cd):
-    """채널별_매출_top3_분석(당해_전년_주요변화)"""
+    """채널별 매출 분석 통합 함수 - TOP3 분석 및 종합분석 모두 수행"""
     print(f"\n{'='*60}")
     print(f"채널별 매출 분석 시작: {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
     print(f"{'='*60}")
@@ -539,7 +651,7 @@ def analyze_channel_sales(yyyymm, brd_cd):
         
         print(f"분석 기간: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월")
         
-        # SQL 쿼리 실행 (4-1-1-1용: 당해/전년 동월 비교)
+        # SQL 쿼리 실행 (한 번만 조회)
         sql = get_channel_sales_cypy_query(yyyymm, yyyymm_py, brd_cd)
         df = run_query(sql, engine)
         records = df.to_dicts()
@@ -801,155 +913,111 @@ def analyze_channel_sales(yyyymm, brd_cd):
             }
         }
         
-        # 파일 저장
-        filename = f"4-1-1-1.{brd_cd}_채널별_매출_top3_분석(당해_전년_주요변화)"
-        save_json(json_data, filename)
+        # ============================================================
+        # 두 번째 분석: 브랜드별 채널 매출 종합분석 (OVERALL)
+        # ============================================================
+        print(f"\n{'='*60}")
+        print(f"채널별 매출 종합분석 시작 (OVERALL): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
+        print(f"{'='*60}")
         
-        # Markdown도 저장 (analysis_data의 sections를 조합)
-        markdown_content = f"# {analysis_data.get('title', '채널별 매출 분석')}\n\n"
-        for section in analysis_data.get('sections', []):
-            markdown_content += f"## {section.get('sub_title', '')}\n\n"
-            markdown_content += f"{section.get('ai_text', '')}\n\n"
-        save_markdown(markdown_content, filename)
-        
-        print(f"[OK] 분석 완료!\n")
-        return json_data
-        
-    finally:
-        engine.dispose()
-
-def analyze_channel_sales_overall(yyyymm, brd_cd): 
-    """채널별 매출 종합분석 (당해_전년 주요변화) - 4-1-1-2"""
-    print(f"\n{'='*60}")
-    print(f"채널별 매출 종합분석 시작 (4-1-1-2): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
-    print(f"{'='*60}")
-    
-    # DB 연결
-    engine = get_db_engine()
-    
-    try:
-        # 분석 기간 계산 (당해/전년 동월)
-        current_year = int(yyyymm[:4])
-        current_month = int(yyyymm[4:6])
-        previous_year = current_year - 1
-        yyyymm_py = f"{previous_year:04d}{current_month:02d}"
-        
-        print(f"분석 기간: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월")
-        
-        # SQL 쿼리 실행
-        sql = get_channel_sales_cypy_query(yyyymm, yyyymm_py, brd_cd)
-        df = run_query(sql, engine)
-        records = df.to_dicts()
-        
-        if not records:
-            print("데이터가 없습니다.")
-            return None
-        
-        # 데이터 요약
+        # 데이터 요약 (두 번째 분석용)
         current_data = [r for r in records if r.get('PST_YYYYMM') == yyyymm]
         previous_data = [r for r in records if r.get('PST_YYYYMM') == yyyymm_py]
         
         total_sales_cy = sum(float(r.get('SALE_AMT', 0)) for r in current_data)
         total_sales_py = sum(float(r.get('SALE_AMT', 0)) for r in previous_data)
-        total_sales = total_sales_cy + total_sales_py
-        
-        unique_channels = len(set(r.get('CHNL_NM', '') for r in records))
-        unique_items = len(set(r.get('CLASS3', '') for r in records))
         
         print(f"전년 매출액: {total_sales_py:,.0f}원 ({total_sales_py/1000000:.2f}백만원)")
         print(f"당해 매출액: {total_sales_cy:,.0f}원 ({total_sales_cy/1000000:.2f}백만원)")
-        print(f"총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)")
-        print(f"채널 수: {unique_channels}개")
-        print(f"아이템 수: {unique_items}개")
         
         # 채널별 요약 데이터 생성 (당해/전년 비교)
-        channel_summary = {}
+        channel_summary_overall = {}
         for record in records:
             chnl_nm = record.get('CHNL_NM', '기타')
             month = record.get('PST_YYYYMM', '')
             sale_amt = float(record.get('SALE_AMT', 0))
             
-            if chnl_nm not in channel_summary:
-                channel_summary[chnl_nm] = {
+            if chnl_nm not in channel_summary_overall:
+                channel_summary_overall[chnl_nm] = {
                     'current_sales': 0,
                     'previous_sales': 0,
                     'all_items': []
                 }
             
             if month == yyyymm:
-                channel_summary[chnl_nm]['current_sales'] += sale_amt
+                channel_summary_overall[chnl_nm]['current_sales'] += sale_amt
             elif month == yyyymm_py:
-                channel_summary[chnl_nm]['previous_sales'] += sale_amt
+                channel_summary_overall[chnl_nm]['previous_sales'] += sale_amt
         
         # 채널별 상위 아이템 추출 (당해 기준)
-        item_sales_by_channel = {}
+        item_sales_by_channel_overall = {}
         for record in current_data:
             chnl_nm = record.get('CHNL_NM', '기타')
             class3 = record.get('CLASS3', '기타')
             sale_amt = float(record.get('SALE_AMT', 0))
             
             key = f"{chnl_nm}|{class3}"
-            if key not in item_sales_by_channel:
-                item_sales_by_channel[key] = {
+            if key not in item_sales_by_channel_overall:
+                item_sales_by_channel_overall[key] = {
                     'chnl_nm': chnl_nm,
                     'class3': class3,
                     'total_sales': 0
                 }
-            item_sales_by_channel[key]['total_sales'] += sale_amt
+            item_sales_by_channel_overall[key]['total_sales'] += sale_amt
         
         # 채널별로 전체 아이템 추출 (top3 제한 없음)
-        for chnl_nm in channel_summary.keys():
+        for chnl_nm in channel_summary_overall.keys():
             channel_items = [
-                item for key, item in item_sales_by_channel.items()
+                item for key, item in item_sales_by_channel_overall.items()
                 if item['chnl_nm'] == chnl_nm
             ]
             channel_items.sort(key=lambda x: x['total_sales'], reverse=True)
             # 모든 아이템 포함 (제한 없음)
-            channel_summary[chnl_nm]['all_items'] = [
+            channel_summary_overall[chnl_nm]['all_items'] = [
                 {
                     'class3': item['class3'],
                     'total_sales': round(item['total_sales'] / 1000000, 2)
                 }
                 for item in channel_items
             ]
-            channel_summary[chnl_nm]['current_sales'] = round(
-                channel_summary[chnl_nm]['current_sales'] / 1000000, 2
+            channel_summary_overall[chnl_nm]['current_sales'] = round(
+                channel_summary_overall[chnl_nm]['current_sales'] / 1000000, 2
             )
-            channel_summary[chnl_nm]['previous_sales'] = round(
-                channel_summary[chnl_nm]['previous_sales'] / 1000000, 2
+            channel_summary_overall[chnl_nm]['previous_sales'] = round(
+                channel_summary_overall[chnl_nm]['previous_sales'] / 1000000, 2
             )
-            if channel_summary[chnl_nm]['previous_sales'] > 0:
-                channel_summary[chnl_nm]['change_pct'] = round(
-                    ((channel_summary[chnl_nm]['current_sales'] - channel_summary[chnl_nm]['previous_sales']) / channel_summary[chnl_nm]['previous_sales'] * 100), 1
+            if channel_summary_overall[chnl_nm]['previous_sales'] > 0:
+                channel_summary_overall[chnl_nm]['change_pct'] = round(
+                    ((channel_summary_overall[chnl_nm]['current_sales'] - channel_summary_overall[chnl_nm]['previous_sales']) / channel_summary_overall[chnl_nm]['previous_sales'] * 100), 1
                 )
             else:
-                channel_summary[chnl_nm]['change_pct'] = 0
+                channel_summary_overall[chnl_nm]['change_pct'] = 0
         
         # 채널별로 당해/전년 데이터 존재 여부 확인
-        channel_data_check = {}
+        channel_data_check_overall = {}
         for record in records:
             chnl_nm = record.get('CHNL_NM', '기타')
             month = record.get('PST_YYYYMM', '')
             
-            if chnl_nm not in channel_data_check:
-                channel_data_check[chnl_nm] = {
+            if chnl_nm not in channel_data_check_overall:
+                channel_data_check_overall[chnl_nm] = {
                     'has_current': False,
                     'has_previous': False
                 }
             
             if month == yyyymm:
-                channel_data_check[chnl_nm]['has_current'] = True
+                channel_data_check_overall[chnl_nm]['has_current'] = True
             elif month == yyyymm_py:
-                channel_data_check[chnl_nm]['has_previous'] = True
+                channel_data_check_overall[chnl_nm]['has_previous'] = True
         
         # 당해/전년 데이터가 모두 있는 채널만 필터링
-        valid_channels = [
-            channel for channel, check in channel_data_check.items()
+        valid_channels_overall = [
+            channel for channel, check in channel_data_check_overall.items()
             if check['has_current'] and check['has_previous']
         ]
         
-        # LLM 프롬프트 생성 (JSON 형식 응답 요청)
-        prompt = f"""
+        # LLM 프롬프트 생성 (종합분석용)
+        prompt_overall = f"""
 너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 브랜드 전체 채널을 종합적으로 분석하여 최고 성과 채널, 개선 필요 채널, 핵심 제안을 도출해줘.
 
 **분석 기간**
@@ -960,12 +1028,12 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
 - 전년 매출액: {total_sales_py:,.0f}원 ({total_sales_py/1000000:.2f}백만원)
 - 당해 매출액: {total_sales_cy:,.0f}원 ({total_sales_cy/1000000:.2f}백만원)
 - 전년대비 변화: {round(((total_sales_cy - total_sales_py) / total_sales_py * 100) if total_sales_py != 0 else 0, 1)}%
-- 분석 채널 수: {len(valid_channels)}개
-- 분석 채널 목록: {', '.join(valid_channels)}
+- 분석 채널 수: {len(valid_channels_overall)}개
+- 분석 채널 목록: {', '.join(valid_channels_overall)}
 - 분석 아이템 수: {unique_items}개
 
 **채널별 전체 데이터**
-{json_dumps_safe({k: v for k, v in channel_summary.items() if k in valid_channels}, ensure_ascii=False, indent=2)}
+{json_dumps_safe({k: v for k, v in channel_summary_overall.items() if k in valid_channels_overall}, ensure_ascii=False, indent=2)}
 
 <분석 목표>
 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 모든 채널을 종합적으로 분석하여:
@@ -983,17 +1051,17 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
   "title": "브랜드별 채널 매출 종합분석",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "최고 성과 채널",
       "ai_text": "최고 성과를 보인 채널들을 종합 분석 (최대 2줄)"
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "개선 필요 채널",
       "ai_text": "개선이 필요한 채널들을 종합 분석 (최대 2줄)"
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "핵심 제안",
       "ai_text": "브랜드 전체 채널 전략에 대한 핵심 제안 (최대 2줄)"
     }}
@@ -1012,41 +1080,41 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
 위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
 """
         
-        # LLM 호출 (JSON 응답)
-        analysis_response = call_llm(prompt, max_tokens=4000)
+        # LLM 호출 (종합분석용)
+        analysis_response_overall = call_llm(prompt_overall, max_tokens=4000)
         
         # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
+        analysis_response_overall = analysis_response_overall.strip()
+        if analysis_response_overall.startswith('```json'):
+            analysis_response_overall = analysis_response_overall[7:]
+        if analysis_response_overall.startswith('```'):
+            analysis_response_overall = analysis_response_overall[3:]
+        if analysis_response_overall.endswith('```'):
+            analysis_response_overall = analysis_response_overall[:-3]
+        analysis_response_overall = analysis_response_overall.strip()
         
         try:
-            analysis_data = json.loads(analysis_response)
+            analysis_data_overall = json.loads(analysis_response_overall)
         except json.JSONDecodeError as e:
             print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
+            print(f"[WARNING] 응답 내용: {analysis_response_overall[:500]}")
             # 기본 구조로 대체
-            analysis_data = {
+            analysis_data_overall = {
                 "title": "브랜드별 채널 매출 종합분석",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "최고 성과 채널", "ai_text": analysis_response},
-                    {"div": "overall-2", "sub_title": "개선 필요 채널", "ai_text": ""},
-                    {"div": "overall-3", "sub_title": "핵심 제안", "ai_text": ""}
+                    {"div": "종합분석-1", "sub_title": "최고 성과 채널", "ai_text": analysis_response_overall},
+                    {"div": "종합분석-2", "sub_title": "개선 필요 채널", "ai_text": ""},
+                    {"div": "종합분석-3", "sub_title": "핵심 제안", "ai_text": ""}
                 ]
             }
         
-        # JSON 데이터 생성
-        json_data = {
+        # JSON 데이터 생성 (종합분석용)
+        json_data_overall = {
             'brand_cd': brd_cd,
             'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
             'yyyymm': yyyymm,
             'yyyymm_py': yyyymm_py,
-            'analysis_data': analysis_data,
+            'analysis_data': analysis_data_overall,
             'summary': {
                 'total_sales_cy': round(total_sales_cy / 1000000, 2),
                 'total_sales_py': round(total_sales_py / 1000000, 2),
@@ -1055,7 +1123,7 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
                 'unique_items': unique_items,
                 'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
             },
-            'channel_summary': channel_summary,
+            'channel_summary': channel_summary_overall,
             'raw_data': {
                 'sample_records': [
                     {
@@ -1074,22 +1142,98 @@ def analyze_channel_sales_overall(yyyymm, brd_cd):
             }
         }
         
-        # 파일 저장 (4-1-1-2로 저장)
-        filename = f"4-1-1-2.{brd_cd}_브랜드별_채널_매출_종합분석(월)"
-        save_json(json_data, filename)
+        # ============================================================
+        # 채널별 섹션과 종합분석을 하나로 통합
+        # ============================================================
         
-        # Markdown도 저장 (analysis_data의 sections를 조합)
-        markdown_content = f"# {analysis_data.get('title', '채널별 매출 분석')}\n\n"
-        for section in analysis_data.get('sections', []):
+        # 종합분석 섹션을 채널별 섹션 뒤에 추가
+        # 종합분석의 div를 "종합분석-1", "종합분석-2" 형태로 변경
+        overall_sections = []
+        for idx, section in enumerate(analysis_data_overall.get('sections', []), 1):
+            overall_sections.append({
+                'div': f'종합분석-{idx}',
+                'sub_title': section.get('sub_title', ''),
+                'ai_text': section.get('ai_text', '')
+            })
+        
+        # 채널별 섹션 + 종합분석 섹션 통합
+        combined_sections = analysis_data.get('sections', []) + overall_sections
+        analysis_data_combined = {
+            'title': analysis_data.get('title', '채널별 매출 top3 분석 (당해 전년 주요변화)'),
+            'sections': combined_sections
+        }
+        
+        # 통합된 JSON 데이터 생성
+        json_data_combined = {
+            'brand_cd': brd_cd,
+            'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
+            'yyyymm': yyyymm,
+            'yyyymm_py': yyyymm_py,
+            'analysis_data': analysis_data_combined,
+            'summary': {
+                'total_sales': round(total_sales / 1000000, 2),
+                'total_sales_cy': round(total_sales_cy / 1000000, 2),
+                'total_sales_py': round(total_sales_py / 1000000, 2),
+                'change_pct': round(((total_sales_cy - total_sales_py) / total_sales_py * 100) if total_sales_py != 0 else 0, 1),
+                'unique_channels': unique_channels,
+                'unique_items': unique_items,
+                'unique_months': unique_months,
+                'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
+            },
+            'channel_summary': channel_summary,
+            'channel_summary_overall': channel_summary_overall,
+            'raw_data': {
+                'sample_records': [
+                    {
+                        'PST_YYYYMM': r.get('PST_YYYYMM', ''),
+                        'CHNL_NM': r.get('CHNL_NM', ''),
+                        'CLASS3': r.get('CLASS3', ''),
+                        'SALE_AMT': float(r.get('SALE_AMT', 0)),
+                        'SALE_AMT_CHNL_TTL': float(r.get('SALE_AMT_CHNL_TTL', 0)),
+                        'SALE_RATIO': float(r.get('SALE_RATIO', 0)),
+                        'IN_YMM_RNK': int(r.get('IN_YMM_RNK', 0)),
+                        'IN_CHNL_RNK': int(r.get('IN_CHNL_RNK', 0))
+                    }
+                    for r in records[:50]
+                ],
+                'total_records_count': len(records)
+            },
+            'trend_data': {
+                'trend_months': sorted(list(set(r.get('PST_YYYYMM', '') for r in records))),
+                'monthly_totals': monthly_totals_list,
+                'monthly_details': [
+                    {
+                        'yyyymm': r.get('PST_YYYYMM', ''),
+                        'chnl_nm': r.get('CHNL_NM', ''),
+                        'class3': r.get('CLASS3', ''),
+                        'sale_amt': round(float(r.get('SALE_AMT', 0)) / 1000000, 2),
+                        'sale_ratio': float(r.get('SALE_RATIO', 0))
+                    }
+                    for r in records
+                ]
+            }
+        }
+        
+        # 파일 저장 (통합된 결과)
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_실판매출_채널별매출분석"
+        save_json(json_data_combined, filename)
+        
+        # Markdown도 저장 (통합된 sections를 조합)
+        markdown_content = f"# {analysis_data_combined.get('title', '채널별 매출 분석')}\n\n"
+        for section in analysis_data_combined.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
         save_markdown(markdown_content, filename)
         
-        print(f"[OK] 분석 완료!\n")
-        return json_data
+        print(f"[OK] 채널별 TOP3 분석 및 종합분석 완료!\n")
+        return json_data_combined
         
     finally:
         engine.dispose()
+
+# analyze_channel_sales_overall 함수는 analyze_channel_sales 함수에 통합되었습니다.
+# 이 함수는 더 이상 사용되지 않습니다.
 
 def analyze_gender_purchase_pattern(yyyymm, brd_cd):
     """성별 구매 패턴 분석 (당해/전년 동월 비교) - 4-1-3-1"""
@@ -1390,7 +1534,8 @@ def analyze_gender_purchase_pattern(yyyymm, brd_cd):
         }
         
         # 파일 저장
-        filename = f"4-1-3-1.{brd_cd}_성별_구매패턴_분석(당해_전년_주요변화)"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_4-1-3-1"
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -1557,7 +1702,7 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
         
         # 섹션 템플릿 동적 생성
         sections_template = ',\n    '.join([
-            '{{\n      "div": "overall-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
+            '{{\n      "div": "종합분석-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
                 idx=i+1,
                 sub_title=section['sub_title'],
                 ai_text=section['ai_text']
@@ -1639,7 +1784,7 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
             analysis_data = {
                 "title": "성별 구매 패턴 분석 (12개월 추이)",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "분석 결과", "ai_text": analysis_response}
+                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
                 ]
             }
         
@@ -1698,7 +1843,8 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
         }
         
         # 파일 저장 (4-1-3-2로 저장)
-        filename = f"4-1-3-2.{brd_cd}_성별_구매패턴_종합분석(12개월추이)"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_4-1-3-2"
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -1715,7 +1861,7 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
         engine.dispose()
 
 def analyze_category_profit(yyyymm, brd_cd):
-    """카테고리별 수익성 분석 (당해/전년 동월 비교) - 5-2-1-1"""
+    """영업이익_아이템별 직접이익_카테고리요약 (당해/전년 동월 비교)"""
     print(f"\n{'='*60}")
     print(f"카테고리별 수익성 분석 시작: {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
     print(f"{'='*60}")
@@ -2051,39 +2197,19 @@ def analyze_category_profit(yyyymm, brd_cd):
             }
         }
         
-        # 파일 저장
-        filename = f"5-2-1-1.{brd_cd}_카테고리별_수익성_분석(당해_전년_주요변화)"
-        save_json(json_data, filename)
+        # ============================================================
+        # 두 번째 분석: 카테고리별 수익성 종합분석 (12개월 추이)
+        # ============================================================
+        print(f"\n{'='*60}")
+        print(f"카테고리별 수익성 종합분석 시작 (12개월 추이): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
+        print(f"{'='*60}")
         
-        # Markdown도 저장 (analysis_data의 sections를 조합)
-        markdown_content = f"# {analysis_data.get('title', '카테고리별 수익성 분석')}\n\n"
-        for section in analysis_data.get('sections', []):
-            markdown_content += f"## {section.get('sub_title', '')}\n\n"
-            markdown_content += f"{section.get('ai_text', '')}\n\n"
-        save_markdown(markdown_content, filename)
-        
-        print(f"[OK] 분석 완료!\n")
-        return json_data
-        
-    finally:
-        engine.dispose()
-
-def analyze_category_profit_overall(yyyymm, brd_cd):
-    """카테고리별 수익성 종합분석 (12개월 추이) - 5-2-1-2"""
-    print(f"\n{'='*60}")
-    print(f"카테고리별 수익성 종합분석 시작 (5-2-1-2): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
-    print(f"{'='*60}")
-    
-    # DB 연결
-    engine = get_db_engine()
-    
-    try:
         # 분석 기간 계산 (12개월)
-        current_year = int(yyyymm[:4])
-        current_month = int(yyyymm[4:6])
+        current_year_overall = int(yyyymm[:4])
+        current_month_overall = int(yyyymm[4:6])
         
-        start_year = current_year
-        start_month = current_month - 11
+        start_year = current_year_overall
+        start_month = current_month_overall - 11
         
         while start_month <= 0:
             start_month += 12
@@ -2242,7 +2368,7 @@ def analyze_category_profit_overall(yyyymm, brd_cd):
         
         # 섹션 템플릿 동적 생성
         sections_template = ',\n    '.join([
-            '{{\n      "div": "overall-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
+            '{{\n      "div": "종합분석-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
                 idx=i+1,
                 sub_title=section['sub_title'],
                 ai_text=section['ai_text']
@@ -2320,29 +2446,49 @@ def analyze_category_profit_overall(yyyymm, brd_cd):
         analysis_response = analysis_response.strip()
         
         try:
-            analysis_data = json.loads(analysis_response)
+            analysis_data_overall = json.loads(analysis_response)
         except json.JSONDecodeError as e:
             print(f"[WARNING] JSON 파싱 실패: {e}")
             print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
             # 기본 구조로 대체
-            analysis_data = {
+            analysis_data_overall = {
                 "title": "카테고리별 수익성 분석 (12개월 추이)",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "분석 결과", "ai_text": analysis_response}
+                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
                 ]
             }
         
-        # JSON 데이터 생성
-        # yyyymm_py 계산 (전년 동월)
-        previous_year = int(yyyymm_end[:4]) - 1
-        yyyymm_py = f"{previous_year}{yyyymm_end[4:6]}"
+        # 종합분석용 category_summary 저장
+        category_summary_overall = category_summary
         
-        json_data = {
+        # ============================================================
+        # 카테고리별 섹션과 종합분석을 하나로 통합
+        # ============================================================
+        
+        # 종합분석 섹션을 카테고리별 섹션 뒤에 추가
+        # 종합분석의 div를 "종합분석-1", "종합분석-2" 형태로 변경
+        overall_sections = []
+        for idx, section in enumerate(analysis_data_overall.get('sections', []), 1):
+            overall_sections.append({
+                'div': f'종합분석-{idx}',
+                'sub_title': section.get('sub_title', ''),
+                'ai_text': section.get('ai_text', '')
+            })
+        
+        # 카테고리별 섹션 + 종합분석 섹션 통합
+        combined_sections = analysis_data.get('sections', []) + overall_sections
+        analysis_data_combined = {
+            'title': analysis_data.get('title', '카테고리별 수익성 분석 (당해 전년 주요변화)'),
+            'sections': combined_sections
+        }
+        
+        # 통합된 JSON 데이터 생성
+        json_data_combined = {
             'brand_cd': brd_cd,
             'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
-            'yyyymm': yyyymm_end,
+            'yyyymm': yyyymm,
             'yyyymm_py': yyyymm_py,
-            'analysis_data': analysis_data,
+            'analysis_data': analysis_data_combined,
             'summary': {
                 'total_sales': round(total_sales / 1000000, 2),
                 'total_qty': round(total_qty, 0),
@@ -2353,9 +2499,10 @@ def analyze_category_profit_overall(yyyymm, brd_cd):
                 'unique_items': unique_items,
                 'unique_products': unique_products,
                 'unique_months': unique_months,
-                'analysis_period': f"{yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월"
+                'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
             },
             'category_summary': category_summary,
+            'category_summary_overall': category_summary_overall,
             'raw_data': {
                 'sample_records': [
                     {
@@ -2391,24 +2538,28 @@ def analyze_category_profit_overall(yyyymm, brd_cd):
             }
         }
         
-        # 파일 저장 (5-2-1-2로 저장)
-        filename = f"5-2-1-2.{brd_cd}_카테고리별_수익성_종합분석(12개월추이)"
-        save_json(json_data, filename)
+        # 파일 저장 (통합된 결과)
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_영업이익_아이템별직접이익"
+        save_json(json_data_combined, filename)
         
-        # Markdown도 저장 (analysis_data의 sections를 조합)
-        markdown_content = f"# {analysis_data.get('title', '카테고리별 수익성 분석')}\n\n"
-        for section in analysis_data.get('sections', []):
+        # Markdown도 저장 (통합된 sections를 조합)
+        markdown_content = f"# {analysis_data_combined.get('title', '카테고리별 수익성 분석')}\n\n"
+        for section in analysis_data_combined.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
         save_markdown(markdown_content, filename)
         
-        print(f"[OK] 분석 완료!\n")
-        return json_data
+        print(f"[OK] 카테고리별 수익성 분석 및 종합분석 완료!\n")
+        return json_data_combined
         
     finally:
         engine.dispose()
 
-def analyze_channel_sales_overall_12m(yyyymm, brd_cd):
+# analyze_category_profit_overall 함수는 analyze_category_profit 함수에 통합되었습니다.
+# 이 함수는 더 이상 사용되지 않습니다.
+
+def analyze_channel_sales_trend(yyyymm, brd_cd):
     """채널별 매출 종합분석 (당해 1월~현재월) - 14-1-1-1"""
     print(f"\n{'='*60}")
     print(f"채널별 매출 종합분석 시작 (14-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
@@ -2746,7 +2897,7 @@ def analyze_channel_sales_overall_12m(yyyymm, brd_cd):
         
         # 섹션 템플릿 동적 생성
         sections_template = ',\n    '.join([
-            '{{\n      "div": "overall-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
+            '{{\n      "div": "종합분석-{idx}",\n      "sub_title": "{sub_title}",\n      "ai_text": "{ai_text}"\n    }}'.format(
                 idx=i+1,
                 sub_title=section['sub_title'],
                 ai_text=section['ai_text']
@@ -2856,7 +3007,7 @@ def analyze_channel_sales_overall_12m(yyyymm, brd_cd):
             analysis_data = {
                 "title": "채널별 매출 종합분석 (당해 1월~현재월)",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "분석 결과", "ai_text": analysis_response}
+                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
                 ]
             }
         
@@ -2909,7 +3060,8 @@ def analyze_channel_sales_overall_12m(yyyymm, brd_cd):
         }
         
         # 파일 저장 (14-1-1-1로 저장)
-        filename = f"14-1-1-1.{brd_cd}_채널별_매출_종합분석(당해1월~현재월)"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_월별채널별매출추세"
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -3135,27 +3287,27 @@ def analyze_operating_expense_by_ctgr1(yyyymm, brd_cd, ctgr1, detail_records, en
   "title": "{ctgr1} 분석",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "투자 방향성 종합 평가",
       "ai_text": "전년대비 {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월 광고비 변화를 종합적으로 평가한 내용 (예: 선택적 축소 - 효율성 중심 예산 재배분 등)"
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "효율적 투자 영역",
       "ai_text": "효과적인 투자 영역들을 불릿 포인트로 나열 (예: • 모델료 신규 투입: 122.9백만원으로 브랜드 이미지 제고 및 소비자 어필 강화 등)"
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "주의 필요 영역",
       "ai_text": "주의가 필요한 영역들을 불릿 포인트로 나열 (예: • E-BIZ 매체광고 증가: 9.2→14.0백만원(+51.8%)로 급격한 증가 원인 등)"
     }},
     {{
-      "div": "overall-4",
+      "div": "종합분석-4",
       "sub_title": "이상징후 및 리스크 감지",
       "ai_text": "이상징후와 리스크를 구체적으로 설명 (예: • 예산 배분의 극단적 변화: 일부 계정의 전액 삭감(기타 광고비)과 신규 대규모 투입(모델료)이 동시 발생하여 마케팅 전략의 급격한 방향 전환을 시사합니다 등)"
     }},
     {{
-      "div": "overall-5",
+      "div": "종합분석-5",
       "sub_title": "마케팅 전략 최적화 방안",
       "ai_text": "단기 전략 방향과 중장기 전략 방향을 구체적으로 제시 (예: ### 즉시 실행 방안\\n1. 모델 마케팅 효과 측정: ... 등)"
     }}
@@ -3192,10 +3344,10 @@ def analyze_operating_expense_by_ctgr1(yyyymm, brd_cd, ctgr1, detail_records, en
     
     try:
         analysis_data = json.loads(analysis_response)
-        # sections에 div 필드 추가 (overall-1, overall-2, ...)
+        # sections에 div 필드 추가 (종합분석-1, 종합분석-2, ...)
         for idx, section in enumerate(analysis_data.get('sections', []), 1):
             if 'div' not in section:
-                section['div'] = f'overall-{idx}'
+                section['div'] = f'종합분석-{idx}'
     except json.JSONDecodeError as e:
         print(f"[WARNING] JSON 파싱 실패: {e}")
         print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
@@ -3265,7 +3417,8 @@ def analyze_operating_expense_by_ctgr1(yyyymm, brd_cd, ctgr1, detail_records, en
     # 9. 파일 저장
     # 파일명에서 특수문자 제거 및 안전한 이름 생성
     safe_ctgr1 = ctgr1.replace('/', '_').replace('(', '_').replace(')', '_').replace(' ', '_')
-    filename = f"6-1-1-1.{brd_cd}_{safe_ctgr1}_추이분석"
+    yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+    filename = f"KR_{yyyymm_short}_{brd_cd}_영업비_{safe_ctgr1}"
     save_json(json_data, filename)
     
     # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -3609,17 +3762,17 @@ def analyze_discount_rate_overall(yyyymm, brd_cd):
   "title": "할인율 종합분석",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "전략 우수 채널",
       "ai_text": "할인율이 낮고 전년대비 개선된 채널들을 4줄 이하로 간략하게 요약해줘. 각 채널의 할인율 수치와 개선 정도를 포함하여 구체적으로 작성하세요."
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "주의 필요 채널",
       "ai_text": "할인율이 높거나 악화된 채널들을 4줄 이하로 간략하게 요약해줘. 각 채널의 할인율 수치와 악화 정도를 포함하여 구체적으로 작성하세요."
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "AI 권장 사항",
       "ai_text": "할인율 최적화를 위한 구체적이고 실행 가능한 전략을 4줄 이하로 간략하게 제시해줘. 채널별 특성을 고려한 실용적인 권장사항을 작성하세요."
     }}
@@ -3655,10 +3808,10 @@ def analyze_discount_rate_overall(yyyymm, brd_cd):
         
         try:
             analysis_data = json.loads(analysis_response)
-            # sections에 div 필드 추가 (overall-1, overall-2, overall-3)
+            # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3)
             for idx, section in enumerate(analysis_data.get('sections', []), 1):
                 if 'div' not in section:
-                    section['div'] = f'overall-{idx}'
+                    section['div'] = f'종합분석-{idx}'
         except json.JSONDecodeError as e:
             print(f"[WARNING] JSON 파싱 실패: {e}")
             print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
@@ -3666,9 +3819,9 @@ def analyze_discount_rate_overall(yyyymm, brd_cd):
             analysis_data = {
                 "title": "할인율 종합분석",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "전략 우수 채널", "ai_text": analysis_response},
-                    {"div": "overall-2", "sub_title": "주의 필요 채널", "ai_text": ""},
-                    {"div": "overall-3", "sub_title": "AI 권장 사항", "ai_text": ""}
+                    {"div": "종합분석-1", "sub_title": "전략 우수 채널", "ai_text": analysis_response},
+                    {"div": "종합분석-2", "sub_title": "주의 필요 채널", "ai_text": ""},
+                    {"div": "종합분석-3", "sub_title": "AI 권장 사항", "ai_text": ""}
                 ]
             }
         
@@ -3706,7 +3859,8 @@ def analyze_discount_rate_overall(yyyymm, brd_cd):
         }
         
         # 파일 저장
-        filename = f"7-1-1-1.{brd_cd}_할인율_종합분석"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_할인율_종합분석"
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -3982,22 +4136,22 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
   "title": "매장효율성 종합분석",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "우수 점포 생산성",
       "ai_text": "점포당 매출이 높고 전년대비 개선된 채널들을 4줄 이하로 간략하게 요약해줘. 각 채널의 점포당 매출 수치와 개선 정도를 포함하여 구체적으로 작성하세요."
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "대응 필요 매장",
       "ai_text": "점포당 매출이 낮거나 악화된 채널들을 4줄 이하로 간략하게 요약해줘. 각 채널의 점포당 매출 수치와 악화 정도를 포함하여 구체적으로 작성하세요."
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "AI 권장사항",
       "ai_text": "매장 효율성 향상을 위한 구체적이고 실행 가능한 전략을 4줄 이하로 간략하게 제시해줘. 채널별 특성을 고려한 실용적인 권장사항을 작성하세요."
     }},
     {{
-      "div": "overall-4",
+      "div": "종합분석-4",
       "sub_title": "최적의 시나리오",
       "ai_text": "이상적인 매장 운영 시나리오와 목표 설정을 4줄 이하로 간략하게 제시해줘. 구체적인 수치와 실행 방안을 포함하여 작성하세요."
     }}
@@ -4034,10 +4188,10 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
         
         try:
             analysis_data = json.loads(analysis_response)
-            # sections에 div 필드 추가 (overall-1, overall-2, overall-3, overall-4)
+            # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3, 종합분석-4)
             for idx, section in enumerate(analysis_data.get('sections', []), 1):
                 if 'div' not in section:
-                    section['div'] = f'overall-{idx}'
+                    section['div'] = f'종합분석-{idx}'
         except json.JSONDecodeError as e:
             print(f"[WARNING] JSON 파싱 실패: {e}")
             print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
@@ -4045,10 +4199,10 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
             analysis_data = {
                 "title": "매장효율성 종합분석",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "우수 점포 생산성", "ai_text": analysis_response},
-                    {"div": "overall-2", "sub_title": "대응 필요 매장", "ai_text": ""},
-                    {"div": "overall-3", "sub_title": "AI 권장사항", "ai_text": ""},
-                    {"div": "overall-4", "sub_title": "최적의 시나리오", "ai_text": ""}
+                    {"div": "종합분석-1", "sub_title": "우수 점포 생산성", "ai_text": analysis_response},
+                    {"div": "종합분석-2", "sub_title": "대응 필요 매장", "ai_text": ""},
+                    {"div": "종합분석-3", "sub_title": "AI 권장사항", "ai_text": ""},
+                    {"div": "종합분석-4", "sub_title": "최적의 시나리오", "ai_text": ""}
                 ]
             }
         
@@ -4089,7 +4243,8 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
         }
         
         # 파일 저장
-        filename = f"8-1-1-1.{brd_cd}_매장효율성_종합분석"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_매장효율성_종합분석"
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
@@ -4342,7 +4497,7 @@ def get_item_sales_overall_query(yyyymm, brd_cd):
     order by month, a.seq, b.chnl_seq
     """
 
-def analyze_item_sales_overall(yyyymm, brd_cd):
+def analyze_item_sales_trend(yyyymm, brd_cd):
     """아이템별 매출 종합분석 (당해 1월~현재월) - 15-1-1-1"""
     print(f"\n{'='*60}")
     print(f"아이템별 매출 종합분석 시작 (15-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
@@ -4485,17 +4640,17 @@ def analyze_item_sales_overall(yyyymm, brd_cd):
   "title": "아이템별 매출 종합분석 (당해 1월~현재월)",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "시즌 트렌드",
       "ai_text": "[F시즌, S시즌, 과시즌 의류의 매출 추이와 성과를 분석하여 시즌별 트렌드를 3줄로 요약]"
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "카테고리",
       "ai_text": "[모자, 신발, 가방, 기타ACC의 매출 추이와 성과를 분석하여 카테고리별 트렌드를 3줄로 요약]"
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "핵심액션",
       "ai_text": "[판매율을 높이기 위해 어떤 전략을 해야하는지 구체적이고 실행 가능한 전략을 3줄로 제시]"
     }}
@@ -4556,9 +4711,9 @@ def analyze_item_sales_overall(yyyymm, brd_cd):
             analysis_data = {
                 "title": "아이템별 매출 종합분석 (당해 1월~현재월)",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "시즌 트렌드", "ai_text": analysis_response},
-                    {"div": "overall-2", "sub_title": "카테고리", "ai_text": "데이터 분석 중"},
-                    {"div": "overall-3", "sub_title": "핵심액션", "ai_text": "데이터 분석 중"}
+                    {"div": "종합분석-1", "sub_title": "시즌 트렌드", "ai_text": analysis_response},
+                    {"div": "종합분석-2", "sub_title": "카테고리", "ai_text": "데이터 분석 중"},
+                    {"div": "종합분석-3", "sub_title": "핵심액션", "ai_text": "데이터 분석 중"}
                 ]
             }
         
@@ -4597,7 +4752,8 @@ def analyze_item_sales_overall(yyyymm, brd_cd):
         }
         
         # 파일 저장
-        filename = f"15-1-1-1.{brd_cd}_아이템_매출_종합분석(당해1월~현재월)"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_월별아이템별매출추세"
         save_json(json_data, filename)
         
         # Markdown 파일 생성
@@ -4736,7 +4892,7 @@ def get_item_stock_overall_query(yyyymm, brd_cd):
     order by yyyymm, item_std
     """
 
-def analyze_item_stock_overall(yyyymm, brd_cd):
+def analyze_item_stock_trend(yyyymm, brd_cd):
     """아이템별 재고 종합분석 (당해 1월~현재월) - 16-1-1-1"""
     print(f"\n{'='*60}")
     print(f"아이템별 재고 종합분석 시작 (16-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
@@ -4965,17 +5121,17 @@ def analyze_item_stock_overall(yyyymm, brd_cd):
   "title": "아이템별 재고 종합분석 (당해 1월~현재월)",
   "sections": [
     {{
-      "div": "overall-1",
+      "div": "종합분석-1",
       "sub_title": "조기경보",
       "ai_text": "[재고증가, 최대 재고액, 수치 악화를 분석하여 3줄로 요약]"
     }},
     {{
-      "div": "overall-2",
+      "div": "종합분석-2",
       "sub_title": "긍정신호",
       "ai_text": "[재고감소, 재고금액 감소를 분석하여 3줄로 요약]"
     }},
     {{
-      "div": "overall-3",
+      "div": "종합분석-3",
       "sub_title": "인사이트",
       "ai_text": "[총재고액, 재고가 감소한 월, 증가한 월을 분석하여 3줄로 요약]"
     }}
@@ -5035,9 +5191,9 @@ def analyze_item_stock_overall(yyyymm, brd_cd):
             analysis_data = {
                 "title": "아이템별 재고 종합분석 (당해 1월~현재월)",
                 "sections": [
-                    {"div": "overall-1", "sub_title": "조기경보", "ai_text": analysis_response},
-                    {"div": "overall-2", "sub_title": "긍정신호", "ai_text": "데이터 분석 중"},
-                    {"div": "overall-3", "sub_title": "인사이트", "ai_text": "데이터 분석 중"}
+                    {"div": "종합분석-1", "sub_title": "조기경보", "ai_text": analysis_response},
+                    {"div": "종합분석-2", "sub_title": "긍정신호", "ai_text": "데이터 분석 중"},
+                    {"div": "종합분석-3", "sub_title": "인사이트", "ai_text": "데이터 분석 중"}
                 ]
             }
         
@@ -5084,7 +5240,8 @@ def analyze_item_stock_overall(yyyymm, brd_cd):
         }
         
         # 파일 저장
-        filename = f"16-1-1-1.{brd_cd}_아이템_재고_종합분석(당해1월~현재월)"
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_월별아이템별재고추세"
         save_json(json_data, filename)
         
         # Markdown 파일 생성
@@ -5113,24 +5270,19 @@ if __name__ == '__main__':
     # 토큰 카운터 초기화
     reset_token_counter()
     
-    # 분석 기간 설정 (202401부터 202509까지)
-    yyyymm_list = []
-    for year in range(2024, 2026):  # 2024년, 2025년
-        for month in range(1, 13):  # 1월부터 12월까지
-            if year == 2024 or (year == 2025 and month <= 9):  # 2024년 전체, 2025년 9월까지
-                yyyymm = f"{year}{month:02d}"
-                yyyymm_list.append(yyyymm)
+    # 분석 기간 설정 (2025년 9월만)
+    yyyymm_list = ['202509']
     
-    print(f"분석할 기간: {len(yyyymm_list)}개월 ({yyyymm_list[0]} ~ {yyyymm_list[-1]})")
+    print(f"분석할 기간: {len(yyyymm_list)}개월 ({yyyymm_list[0]})")
     
     # 브랜드 선택 (원하는 브랜드만 주석 해제)
     brands_to_analyze = [
         'M',   # MLB
-        'I',   # MLB KIDS
-        'X',   # DISCOVERY
-        'V',   # DUVETICA
-        'ST',  # SERGIO TACCHINI
-        'W',   # SUPRA
+        # 'I',   # MLB KIDS
+        # 'X',   # DISCOVERY
+        # 'V',   # DUVETICA
+        # 'ST',  # SERGIO TACCHINI
+        # 'W',   # SUPRA
     ]
     
     # 기간별, 브랜드별 분석 실행
@@ -5146,18 +5298,16 @@ if __name__ == '__main__':
             
             try:
                 # 분석 실행 (원하는 분석만 주석 해제)
-                analyze_channel_sales(yyyymm, brd_cd)  # 채널별 TOP3 매출 분석 (4-1-1-1)
-                analyze_channel_sales_overall(yyyymm, brd_cd)  # 브랜드별 채널 매출 종합분석 (4-1-1-2)
-                analyze_gender_purchase_pattern(yyyymm, brd_cd)  # 성별 구매 패턴 분석 (4-1-3-1)
-                analyze_gender_purchase_pattern_overall(yyyymm, brd_cd)  # 성별 구매 패턴 종합분석 (4-1-3-2)
-                analyze_category_profit(yyyymm, brd_cd)  # 카테고리별 수익성 분석 (5-2-1-1)
-                analyze_category_profit_overall(yyyymm, brd_cd)  # 카테고리별 수익성 종합분석 (5-2-1-2)
-                analyze_operating_expense(yyyymm, brd_cd)  # 영업비 추이분석(6-1-1-1)
-                analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석 (7-1-1-1)
-                analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석 (8-1-1-1)
-                analyze_channel_sales_overall_12m(yyyymm, brd_cd)  # 채널별 매출 종합분석 (당해 1월~현재월) (14-1-1-1)
-                analyze_item_sales_overall(yyyymm, brd_cd)  # 아이템별 매출 종합분석 (당해 1월~현재월) (15-1-1-1)
-                analyze_item_stock_overall(yyyymm, brd_cd)  # 아이템별 재고 종합분석 (당해 1월~현재월) (16-1-1-1)
+                analyze_channel_sales(yyyymm, brd_cd)  # 실판매출_채널별매출분석
+                # analyze_gender_purchase_pattern(yyyymm, brd_cd)  # 성별 구매 패턴 분석 (4-1-3-1)
+                # analyze_gender_purchase_pattern_overall(yyyymm, brd_cd)  # 성별 구매 패턴 종합분석 (4-1-3-2)
+                analyze_category_profit(yyyymm, brd_cd)  # 영업이익_아이템별직접이익
+                analyze_operating_expense(yyyymm, brd_cd)  # 영업비_각 계정별 분석
+                analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석
+                analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석
+                analyze_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출추세 (당해 1월~현재월)
+                analyze_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출추세 (당해 1월~현재월)
+                analyze_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고추세 (당해 1월~현재월)
             except Exception as e:
                 print(f"[ERROR] 브랜드 {brd_cd} 분석 중 오류 발생: {e}")
                 print(f"[ERROR] 다음 브랜드로 계속 진행합니다...\n")
