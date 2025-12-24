@@ -30,8 +30,8 @@ BRAND_CODE_MAP = {
     'W': 'SUPRA',
 }
 
-OUTPUT_JSON_PATH = './output/json'
-OUTPUT_MD_PATH = './output/md'
+OUTPUT_JSON_PATH = './kr_output/json'
+OUTPUT_MD_PATH = './kr_output/md'
 
 # 출력 폴더 생성
 os.makedirs(OUTPUT_JSON_PATH, exist_ok=True)
@@ -5258,6 +5258,54 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
         engine.dispose()
 
 # ============================================================================
+# 유틸리티 함수
+# ============================================================================
+def generate_yyyymm_list(start_yyyymm, end_yyyymm=None):
+    """
+    분석 기간 리스트 생성 함수
+    
+    Args:
+        start_yyyymm: 시작 월 (형식: 'YYYYMM', 예: '202401')
+        end_yyyymm: 종료 월 (형식: 'YYYYMM', 예: '202508'). None이면 start_yyyymm만 반환
+    
+    Returns:
+        list: yyyymm 형식의 월 리스트
+    
+    Examples:
+        # 한 달만 분석
+        generate_yyyymm_list('202509')  # ['202509']
+        
+        # 여러 달 분석
+        generate_yyyymm_list('202401', '202508')  # ['202401', '202402', ..., '202508']
+    """
+    if end_yyyymm is None:
+        return [start_yyyymm]
+    
+    # 시작 년월과 종료 년월 파싱
+    start_year = int(start_yyyymm[:4])
+    start_month = int(start_yyyymm[4:6])
+    end_year = int(end_yyyymm[:4])
+    end_month = int(end_yyyymm[4:6])
+    
+    # 시작일과 종료일 생성
+    start_date = datetime(start_year, start_month, 1)
+    end_date = datetime(end_year, end_month, 1)
+    
+    # 월 리스트 생성
+    yyyymm_list = []
+    current_date = start_date
+    
+    while current_date <= end_date:
+        yyyymm_list.append(current_date.strftime('%Y%m'))
+        # 다음 달로 이동
+        if current_date.month == 12:
+            current_date = datetime(current_date.year + 1, 1, 1)
+        else:
+            current_date = datetime(current_date.year, current_date.month + 1, 1)
+    
+    return yyyymm_list
+
+# ============================================================================
 # 메인 실행
 # ============================================================================
 if __name__ == '__main__':
@@ -5270,19 +5318,31 @@ if __name__ == '__main__':
     # 토큰 카운터 초기화
     reset_token_counter()
     
-    # 분석 기간 설정 (2025년 9월만)
-    yyyymm_list = ['202509']
+    # ========================================================================
+    # 분석 기간 설정
+    # ========================================================================
+    # 방법 1: 한 달만 분석
+    yyyymm_list = generate_yyyymm_list('202511')
     
-    print(f"분석할 기간: {len(yyyymm_list)}개월 ({yyyymm_list[0]})")
+    # 방법 2: 여러 달 분석 (2024년 1월 ~ 2025년 10월)
+    # yyyymm_list = generate_yyyymm_list('202407', '202508')
+    
+    # 방법 3: 직접 리스트 지정
+    # yyyymm_list = ['202509', '202510', '202511']
+    
+    if len(yyyymm_list) == 1:
+        print(f"분석할 기간: {len(yyyymm_list)}개월 ({yyyymm_list[0]})")
+    else:
+        print(f"분석할 기간: {len(yyyymm_list)}개월 ({yyyymm_list[0]} ~ {yyyymm_list[-1]})")
     
     # 브랜드 선택 (원하는 브랜드만 주석 해제)
     brands_to_analyze = [
         'M',   # MLB
-        # 'I',   # MLB KIDS
-        # 'X',   # DISCOVERY
-        # 'V',   # DUVETICA
-        # 'ST',  # SERGIO TACCHINI
-        # 'W',   # SUPRA
+        'I',   # MLB KIDS
+        'X',   # DISCOVERY
+        'V',   # DUVETICA
+        'ST',  # SERGIO TACCHINI
+        'W',   # SUPRA
     ]
     
     # 기간별, 브랜드별 분석 실행
