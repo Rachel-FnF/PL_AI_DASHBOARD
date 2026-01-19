@@ -1,16 +1,40 @@
 # LLM 설정 파라미터 설명
 
+## 현재 프로젝트 구조
+
+이 프로젝트는 두 개의 메인 분석 파일로 구성되어 있습니다:
+- `cn_analysis.py`: 중국 시장 분석 (천 단위 k 사용)
+- `pl_analysis.py`: 한국 시장 분석 (백만원 단위 사용)
+
+두 파일 모두 동일한 `call_llm()` 함수를 사용하지만, 각각 다른 `system_prompt`를 가지고 있습니다.
+
+---
+
 ## 현재 코드에서 사용하는 설정
 
+### 함수 시그니처
 ```python
 def call_llm(prompt, max_tokens=4000, temperature=0.7):
+    """Claude API 호출"""
+    api_key = os.getenv('CLAUDE_API_KEY')
     client = anthropic.Anthropic(api_key=api_key, timeout=120.0)
+    
+    # System Prompt (각 파일마다 다름)
+    system_prompt = """
+    당신은 F&F 그룹의 최고 전략 분석가입니다. 다음 원칙을 반드시 준수하세요:
+    ...
+    """
+    
+    full_prompt = system_prompt + "\n\n" + prompt
+    
     message = client.messages.create(
         model='claude-sonnet-4-20250514',
         max_tokens=max_tokens,
         temperature=temperature,
         messages=[{"role": "user", "content": full_prompt}]
     )
+    
+    return message.content[0].text
 ```
 
 ---
@@ -26,9 +50,13 @@ model='claude-sonnet-4-20250514'
 - 사용할 AI 모델의 버전을 지정
 - `claude-sonnet-4-20250514`: Claude Sonnet 4 모델의 2025년 5월 14일 버전
 
+**현재 프로젝트에서:**
+- 고품질 분석이 필요하므로 최신 Sonnet 4 모델 사용
+- 모든 분석 함수에서 동일한 모델 사용
+
 **다른 모델 옵션:**
 - `claude-3-5-sonnet-20241022`: Claude 3.5 Sonnet (더 최신 버전)
-- `claude-3-opus-20240229`: Claude 3 Opus (가장 강력하지만 느림)
+- `claude-3-opus-20240229`: Claude 3 Opus (가장 강력하지만 느리고 비쌈)
 - `claude-3-haiku-20240307`: Claude 3 Haiku (가장 빠르고 저렴)
 
 **영향:**
@@ -44,14 +72,17 @@ max_tokens=4000  # 기본값
 
 **의미:**
 - AI가 생성할 수 있는 **최대 출력 길이**를 제한
-- **토큰(Token)**: 텍스트의 기본 단위 (한국어 약 1-2글자 = 1토큰, 영어 단어 1개 ≈ 1-2토큰)
+- **토큰(Token)**: 텍스트의 기본 단위
+  - 한국어: 약 1-2글자 = 1토큰
+  - 영어: 단어 1개 ≈ 1-2토큰
 
 **예시:**
 - `max_tokens=4000` → 약 3,000-4,000자 정도의 한국어 텍스트 생성 가능
 - `max_tokens=1000` → 약 750-1,000자 정도만 생성
 
 **현재 프로젝트에서:**
-- 분석 결과가 길어야 하므로 `4000`으로 설정
+- 대부분의 분석 함수에서 `max_tokens=4000` 사용
+- 분석 결과가 길어야 하므로 충분한 길이 확보
 - 더 긴 분석이 필요하면 `8000` 또는 `16000`으로 증가 가능
 
 **주의사항:**
@@ -112,31 +143,58 @@ timeout=120.0  # 120초 (2분)
 
 ---
 
+### 5. **`system_prompt` (시스템 프롬프트)**
+
+**의미:**
+- AI에게 역할과 분석 원칙을 지시하는 프롬프트
+- 모든 분석 요청에 자동으로 포함됨
+
+**cn_analysis.py (중국 시장 분석):**
+- 금액 단위: **천 단위(k)** 사용
+- 예: `1,234k`, `588k`
+- 소수점 사용 금지, 정수로 반올림
+
+**pl_analysis.py (한국 시장 분석):**
+- 금액 단위: **백만원 단위** 사용
+- 예: `1,234백만원`, `588백만원`
+- 소수점 사용 금지, 정수로 반올림
+
+**공통 원칙:**
+- 숫자는 절대 변형하지 말고 원본 그대로 사용
+- 경영관리팀 대상의 전략적 관점
+- 즉시 실행 가능한 구체적 액션플랜 제시
+- 리스크와 기회를 명확히 구분
+- 근거 기반의 객관적 분석
+
+---
+
 ## 💡 실제 사용 예시
 
-### 현재 설정으로 분석할 때:
+### 기본 사용 (현재 프로젝트):
 ```python
-call_llm(prompt, max_tokens=4000, temperature=0.7)
+# cn_analysis.py 또는 pl_analysis.py에서
+analysis_response = call_llm(prompt, max_tokens=4000)
 ```
 
 **결과:**
 - ✅ 최대 4,000 토큰(약 3,000-4,000자)의 분석 생성
-- ✅ 일관성과 창의성의 균형잡힌 인사이트
+- ✅ 일관성과 창의성의 균형잡힌 인사이트 (temperature=0.7)
 - ✅ 2분 내 응답 완료
+- ✅ system_prompt가 자동으로 포함되어 일관된 형식 유지
 
 ### 더 긴 분석이 필요할 때:
 ```python
-call_llm(prompt, max_tokens=8000, temperature=0.7)
+analysis_response = call_llm(prompt, max_tokens=8000, temperature=0.7)
 ```
 
 ### 더 객관적인 분석이 필요할 때:
 ```python
-call_llm(prompt, max_tokens=4000, temperature=0.3)
+analysis_response = call_llm(prompt, max_tokens=4000, temperature=0.3)
 ```
 
 ### 더 창의적인 전략이 필요할 때:
 ```python
-call_llm(prompt, max_tokens=4000, temperature=0.9)
+analysis_response = call_llm(prompt, max_tokens=4000, temperature=0.9)
 ```
 
 ---
@@ -145,20 +203,26 @@ call_llm(prompt, max_tokens=4000, temperature=0.9)
 
 현재 코드는 토큰 사용량을 자동으로 추적합니다:
 
-```python
-# 각 LLM 호출마다 출력
+### 각 LLM 호출마다 출력:
+```
+[LLM] Claude API 호출 중...
 [OK] LLM 응답 완료 (입력: 1,234 토큰, 출력: 567 토큰, 총: 1,801 토큰)
-
-# 전체 분석 완료 후 출력
-입력 토큰: 50,000 토큰
-출력 토큰: 25,000 토큰
-총 토큰: 75,000 토큰
 ```
 
-**비용 계산:**
-- Claude Sonnet 4 기준 (대략):
-  - 입력: $3 / 1M 토큰
-  - 출력: $15 / 1M 토큰
+### 전체 분석 완료 후 출력:
+```python
+# 메인 함수에서
+total_tokens = get_total_tokens()
+total_token_count = total_tokens['input'] + total_tokens['output']
+
+print(f"총 토큰 사용량: {total_token_count:,} 토큰")
+print(f"  입력: {total_tokens['input']:,} 토큰")
+print(f"  출력: {total_tokens['output']:,} 토큰")
+```
+
+**비용 계산 (Claude Sonnet 4 기준, 대략):**
+- 입력: $3 / 1M 토큰
+- 출력: $15 / 1M 토큰
 - 예시: 75,000 토큰 사용 시 약 $0.001 (약 1원)
 
 ---
@@ -172,12 +236,27 @@ analysis_response = call_llm(prompt, max_tokens=8000, temperature=0.7)
 
 # 더 객관적인 분석
 analysis_response = call_llm(prompt, max_tokens=4000, temperature=0.3)
+
+# 더 창의적인 분석
+analysis_response = call_llm(prompt, max_tokens=4000, temperature=0.9)
 ```
 
 ### 함수 기본값 변경:
+`cn_analysis.py` 또는 `pl_analysis.py` 파일에서:
 ```python
 def call_llm(prompt, max_tokens=8000, temperature=0.5):  # 기본값 변경
     ...
+```
+
+### 모델 변경:
+```python
+# call_llm 함수 내부에서
+message = client.messages.create(
+    model='claude-3-5-sonnet-20241022',  # 모델 변경
+    max_tokens=max_tokens,
+    temperature=temperature,
+    messages=[{"role": "user", "content": full_prompt}]
+)
 ```
 
 ---
@@ -190,6 +269,27 @@ def call_llm(prompt, max_tokens=8000, temperature=0.5):  # 기본값 변경
 | **max_tokens** | `4000` | 최대 출력 길이 | 응답 길이, 비용 |
 | **temperature** | `0.7` | 창의성 조절 | 일관성 vs 다양성 |
 | **timeout** | `120.0` | 최대 대기 시간 | 에러 방지 |
+| **system_prompt** | 파일별 상이 | 분석 원칙 | 출력 형식 일관성 |
 
 **현재 설정은 비즈니스 분석에 적합한 균형잡힌 설정입니다!** ✅
 
+---
+
+## ⚠️ 주의사항
+
+### API 크레딧 부족 오류
+```
+balance is too low to access the Anthropic API
+```
+- **원인**: Anthropic API 계정 잔액 부족
+- **해결**: [Anthropic Console](https://console.anthropic.com/)에서 충전 필요
+
+### JSON 파싱 오류
+- LLM 응답이 마크다운 코드 블록으로 감싸져 있을 경우 자동으로 제거됨
+- 파싱 실패 시 기본 구조로 대체되어 저장됨
+- 콘솔에 `[WARNING] JSON 파싱 실패` 메시지 출력
+
+### 토큰 사용량 모니터링
+- 각 분석 함수 실행 시 토큰 사용량이 자동으로 추적됨
+- 메인 함수 종료 시 전체 토큰 사용량 출력
+- 비용 관리에 참고하세요

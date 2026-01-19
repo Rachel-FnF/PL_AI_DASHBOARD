@@ -44,24 +44,27 @@ def get_db_engine():
     """Snowflake DB 연결 엔진 생성"""
     account = os.getenv('SNOWFLAKE_ACCOUNT')
     user = os.getenv('SNOWFLAKE_USER')
-    password = os.getenv('SNOWFLAKE_PASSWORD')
+    authenticator = os.getenv('SNOWFLAKE_AUTHENTICATOR')
+    # password = os.getenv('SNOWFLAKE_PASSWORD')
     database = os.getenv('SNOWFLAKE_DATABASE')
-    schema = os.getenv('SNOWFLAKE_SCHEMA')
+    # schema = os.getenv('SNOWFLAKE_SCHEMA')
     warehouse = os.getenv('SNOWFLAKE_WAREHOUSE')
-    role = os.getenv('SNOWFLAKE_ROLE')
+    # role = os.getenv('SNOWFLAKE_ROLE')
     
-    if not all([account, user, password, database, schema, warehouse, role]):
+    # if not all([account, user, password, database, schema, warehouse, role]):
+    if not all([account, user, database, warehouse, authenticator]):
         raise ValueError("Snowflake 환경 변수가 설정되지 않았습니다. .env 파일을 확인하세요.")
     
     return create_engine(
         URL(
             account=account,
             user=user,
-            password=password,
+            # password=password,
             database=database,
-            schema=schema,
+            # schema=schema,
+            authenticator=authenticator,
             warehouse=warehouse,
-            role=role,
+            # role=role,
         )
     )
 
@@ -144,6 +147,63 @@ def reset_token_counter():
     """토큰 카운터 초기화"""
     global _total_tokens_used
     _total_tokens_used = {'input': 0, 'output': 0}
+
+# ============================================================================
+# 공통 프롬프트 템플릿
+# ============================================================================
+def get_common_prompt_guidelines():
+    """공통 프롬프트 가이드라인 텍스트 반환"""
+    return """- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
+- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
+- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
+- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
+- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
+- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)"""
+
+def get_common_json_requirement():
+    """공통 JSON 요구사항 텍스트 반환"""
+    return """아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘."""
+
+def get_common_prompt_footer():
+    """공통 프롬프트 푸터 텍스트 반환"""
+    return """위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:"""
+
+def parse_llm_json_response(response_text, default_title="분석 결과"):
+    """
+    LLM 응답에서 JSON을 파싱하는 공통 함수
+    
+    Args:
+        response_text: LLM 응답 텍스트
+        default_title: 파싱 실패 시 사용할 기본 제목
+    
+    Returns:
+        dict: 파싱된 JSON 데이터
+    """
+    # JSON 파싱 (마크다운 코드 블록 제거)
+    response_text = response_text.strip()
+    if response_text.startswith('```json'):
+        response_text = response_text[7:]
+    if response_text.startswith('```'):
+        response_text = response_text[3:]
+    if response_text.endswith('```'):
+        response_text = response_text[:-3]
+    response_text = response_text.strip()
+    
+    try:
+        analysis_data = json.loads(response_text)
+    except json.JSONDecodeError as e:
+        print(f"[WARNING] JSON 파싱 실패: {e}")
+        print(f"[WARNING] 응답 내용: {response_text[:500]}")
+        # 기본 구조로 대체
+        analysis_data = {
+            "title": default_title,
+            "sections": [
+                {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": response_text}
+            ]
+        }
+    
+    return analysis_data
 
 # ============================================================================
 # 파일 저장
@@ -487,6 +547,116 @@ def get_category_profit_analysis_query(yyyymm, yyyymm_py, brd_cd):
       PRDT_NM
     """
 
+def get_store_profit_query(yyyymm, yyyymm_py, brd_cd):
+    """매장별 직접이익 분석 쿼리 (당해/전년 동월 비교)"""
+    # 브랜드 코드를 리스트 형식으로 변환 (쿼리에서 IN 절 사용)
+    if isinstance(brd_cd, list):
+        brd_cd_list = "', '".join(brd_cd)
+        brd_cd_filter = f"'{brd_cd_list}'"
+    else:
+        brd_cd_filter = f"'{brd_cd}'"
+    
+    return f"""
+with t1 as (
+    select a.PST_YYYYMM
+         , CASE
+               WHEN TO_NUMBER(LEFT(a.PST_YYYYMM, 4)) = YEAR(TO_DATE('{yyyymm}', 'YYYYMM')) THEN '당해'
+               WHEN TO_NUMBER(LEFT(a.PST_YYYYMM, 4)) = YEAR(DATEADD(YEAR, -1, TO_DATE('{yyyymm}', 'YYYYMM'))) THEN '전년'
+               ELSE '기타'
+    END AS PYCY
+         , a.BRD_CD
+         , a.BRD_NM
+         , a.CHNL_CD
+         , a.CHNL_NM
+         , sum(TAG_SALE_AMT) as TAG_SALE_AMT
+         , sum(ACT_SALE_AMT) as ACT_SALE_AMT
+         , sum(RVSL_BEF_COGS) as RVSL_BEF_COGS
+         , sum(VLTN_RVSL_AMT) as VLTN_RVSL_AMT
+         , sum(RVSL_AFT_COGS) as RVSL_AFT_COGS
+         , sum(DSTRB_CMS) as DSTRB_CMS
+         , SUM(ACT_SALE_AMT) / 1.1 - SUM(RVSL_AFT_COGS) + SUM(VLTN_AMT) - sum(DSTRB_CMS) as GROSS_PRFT
+         , sum(RYT) as RYT
+         , sum(SHOP_RNT) as SHOP_RNT
+         , case
+               when a.CHNL_CD = '1' then sum(SM_CMS)
+               when a.CHNL_CD = '2' then sum(DF_SALE_STFF_CMS)
+               when a.CHNL_CD in ('3', '11') then sum(DMGMT_SALE_STFF_CMS)
+               when a.CHNL_CD in ('7', '12') then sum(DMGMT_SALE_STFF_CMS)
+               when a.CHNL_CD in ('4', '5') then sum(ALNC_ONLN_CMS)
+               ELSE 0
+    end as CMS
+         , sum(SM_CMS) as SM_CMS
+         , sum(DF_SALE_STFF_CMS) as DF_SALE_STFF_CMS
+         , sum(DMGMT_SALE_STFF_CMS) as DMGMT_SALE_STFF_CMS
+         , sum(ALNC_ONLN_CMS) as ALNC_ONLN_CMS
+         , sum(SHOP_DEPRC_CST) as SHOP_DEPRC_CST
+         , sum(CARD_CMS) as CARD_CMS
+         , sum(LGT_CST) + sum(STRG_CST) as LGT_STRG_CST
+    from SAP_FNF.dm_prft_shop_m a
+    join SAP_FNF.dm_dcst_shop_m b
+        on a.PST_YYYYMM = b.PST_YYYYMM
+        and a.CORP_CD = b.CORP_CD
+        and a.BRD_CD = b.BRD_CD
+        and a.CHNL_CD = b.CHNL_CD
+        and a.SHOP_CD = b.SHOP_CD
+        and a.RF_YN = b.RF_YN
+    WHERE a.PST_YYYYMM BETWEEN '{yyyymm_py}' AND '{yyyymm}'
+      AND a.CHNL_CD NOT IN ('0', '8', '9', '99')
+      AND a.BRD_CD = '{brd_cd}'
+    GROUP BY a.PST_YYYYMM
+           , a.BRD_CD
+           , a.BRD_NM
+           , a.CHNL_CD
+           , a.CHNL_NM
+    order by PST_YYYYMM desc, brd_cd, chnl_cd
+)
+select BRD_CD || CHNL_NM || PST_YYYYMM AS MASTER,
+       pst_yyyymm,
+       right(PST_YYYYMM, 2) || '월' as month,
+       PYCY,
+       brd_cd,
+       chnl_nm,
+       tag_sale_amt,
+       ACT_SALE_AMT,
+       RVSL_BEF_COGS,
+       VLTN_RVSL_AMT,
+       RVSL_AFT_COGS,
+       DSTRB_CMS,
+       GROSS_PRFT,
+       RYT,
+       SHOP_RNT,
+       CMS,
+       SHOP_DEPRC_CST,
+       CARD_CMS,
+       LGT_STRG_CST,
+       sum(RYT) + sum(SHOP_RNT) + sum(CMS) + sum(SHOP_DEPRC_CST) + sum(CARD_CMS) +
+       sum(LGT_STRG_CST) as DCST,
+       sum(GROSS_PRFT) - sum(RYT) - sum(SHOP_RNT) - sum(CMS) - sum(SHOP_DEPRC_CST) - sum(CARD_CMS) -
+       sum(LGT_STRG_CST) as DPRFT
+from t1
+where brd_cd = '{brd_cd}'
+group by master,
+         pst_yyyymm,
+         right(PST_YYYYMM, 2),
+         pycy,
+         brd_cd,
+         chnl_nm,
+         tag_sale_amt,
+         ACT_SALE_AMT,
+         RVSL_BEF_COGS,
+         VLTN_RVSL_AMT,
+         RVSL_AFT_COGS,
+         dstrb_cms,
+         GROSS_PRFT,
+         RYT,
+         SHOP_RNT,
+         CMS,
+         SHOP_DEPRC_CST,
+         CARD_CMS,
+         LGT_STRG_CST
+order by pst_yyyymm desc, brd_cd, chnl_nm
+"""
+
 def get_category_profit_overall_query(yyyymm_start, yyyymm_end, brd_cd):
     """카테고리별 수익성 종합분석 쿼리 (12개월 추이) - 5-2-1-2용"""
     # 시작 년월을 날짜로 변환
@@ -802,7 +972,10 @@ def analyze_channel_sales(yyyymm, brd_cd):
 {json_dumps_safe(channel_comparison, ensure_ascii=False, indent=2)}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매출 베스트 아이템 3개를 전년대비 주요변화로 분석해줘.
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매출 베스트 아이템 3개를 전년대비 주요변화로 분석하여:
+1. 채널별 TOP 3 매출 아이템과 각 아이템의 판매 성과 분석
+2. 전년대비 주요 변화와 변화율, 변화 원인 분석
+3. 채널별 특성에 맞는 단기 및 중장기 전략 방향 제시
 
 **중요**: 위 "채널별 데이터 요약"에 있는 채널만 분석하면 됩니다. 데이터가 없는 채널은 분석하지 마세요.
 
@@ -810,7 +983,7 @@ def analyze_channel_sales(yyyymm, brd_cd):
 {json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 각 채널별로 하나의 섹션을 만들어야 합니다. 채널 목록: {', '.join(valid_channels)}
 
@@ -820,51 +993,32 @@ def analyze_channel_sales(yyyymm, brd_cd):
     {{
       "div": "{{채널명}}",
       "sub_title": "{{채널명}} 전년대비 주요 변화",
-      "ai_text": "각 {{채널명}} 당해 당월 매출 베스트 아이템 3개를 한 줄씩 전년대비 주요변화로 분석해줘. 채널별 데이터 요약의 current_top3와 current_total, previous_total을 참고하여 구체적인 변화율과 원인을 분석해줘. (예: • 운동모: 당해 신규 D핏 언스트럭쳐 볼캡 제품 +156.3% 폭증\\n • 숄더백: 클래식 모노그램 뉴 엠보 성수/한남점 폭발적 반응 +145.2%\\n • 햇 : 고딕버킷햇 제품 폭발적 성장 +120.1% 등)"
+      "ai_text": "각 {{채널명}} 당해 당월 매출 베스트 아이템 3개를 한 줄씩 전년대비 주요변화로 분석한 내용. 채널별 데이터 요약의 current_top3와 current_total, previous_total을 참고하여 구체적인 변화율과 원인을 분석해줘. 각 아이템별로 매출액, 전년대비 변화율, 변화 원인(신규 제품, 특정 매장 반응, 제품 특징 등)을 포함하여 작성하세요. (예: • 운동모: 당해 신규 D핏 언스트럭쳐 볼캡 제품 +156.3% 폭증\\n • 숄더백: 클래식 모노그램 뉴 엠보 성수/한남점 폭발적 반응 +145.2%\\n • 햇 : 고딕버킷햇 제품 폭발적 성장 +120.1% 등)"
     }}
   ]
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
-- 당해 채널별 TOP 3 매출 아이템과 그중 어떤 제품이 판매율이 좋았는지
-- 전년대비 주요 변화 분석
-- 단기 전략 방향과 중장기 전략 방향을 구체적으로 시사
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
+{get_common_prompt_guidelines()}
+- **각 채널별 섹션 작성 시 반드시 포함해야 할 내용:**
+  1. 당해 채널별 TOP 3 매출 아이템과 각 아이템의 매출액(백만원 단위)
+  2. 각 아이템의 전년대비 변화율과 변화액
+  3. 변화 원인 분석 (신규 제품 출시, 특정 매장/지역 반응, 제품 특징, 마케팅 효과 등)
+  4. 채널별 특성을 고려한 단기 전략 방향 (다음 분기 또는 다음 시즌)
+  5. 채널별 특성을 고려한 중장기 전략 방향 (향후 6개월~1년)
+- 채널별 데이터 요약의 current_top3, current_total, previous_total을 반드시 참고하여 분석
+- 각 아이템별로 구체적인 수치와 변화율을 포함하여 작성
+- 변화 원인은 가능한 한 구체적으로 분석 (제품명, 매장명, 지역, 시기 등)
+- 전략 방향은 실행 가능하고 구체적인 내용으로 작성
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "채널별 매출 분석 (12개월 추이)",
-                "sections": [
-                    {"sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "채널별 매출 분석 (12개월 추이)")
         
         # JSON 데이터 생성
         json_data = {
@@ -1070,43 +1224,29 @@ def analyze_channel_sales(yyyymm, brd_cd):
 
 <작성 가이드라인>
 - 각 섹션의 ai_text는 최대 2줄을 넘지 않도록 간결하게 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 모든 채널의 데이터를 종합적으로 분석 (특정 채널만이 아닌 전체 관점)
 - 채널별 top3가 아니라 전체 채널을 종합적으로 분석
 - 구체적인 채널명과 수치를 포함하여 실용적인 내용으로 작성
-- 줄바꿈은 반드시 \\n을 사용하여 표시
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (종합분석용)
         analysis_response_overall = call_llm(prompt_overall, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response_overall = analysis_response_overall.strip()
-        if analysis_response_overall.startswith('```json'):
-            analysis_response_overall = analysis_response_overall[7:]
-        if analysis_response_overall.startswith('```'):
-            analysis_response_overall = analysis_response_overall[3:]
-        if analysis_response_overall.endswith('```'):
-            analysis_response_overall = analysis_response_overall[:-3]
-        analysis_response_overall = analysis_response_overall.strip()
-        
-        try:
-            analysis_data_overall = json.loads(analysis_response_overall)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response_overall[:500]}")
-            # 기본 구조로 대체
-            analysis_data_overall = {
-                "title": "브랜드별 채널 매출 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "최고 성과 채널", "ai_text": analysis_response_overall},
-                    {"div": "종합분석-2", "sub_title": "개선 필요 채널", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "핵심 제안", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data_overall = parse_llm_json_response(analysis_response_overall, "브랜드별 채널 매출 종합분석")
+        # div 필드 추가
+        for idx, section in enumerate(analysis_data_overall.get('sections', []), 1):
+            if 'div' not in section:
+                section['div'] = f'종합분석-{idx}'
+        # 기본 구조 보완
+        if len(analysis_data_overall.get('sections', [])) < 2:
+            analysis_data_overall['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "개선 필요 채널", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "핵심 제안", "ai_text": ""}
+            ])
         
         # JSON 데이터 생성 (종합분석용)
         json_data_overall = {
@@ -1424,7 +1564,10 @@ def analyze_gender_purchase_pattern(yyyymm, brd_cd):
 {json_dumps_safe(gender_comparison, ensure_ascii=False, indent=2)}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 당해 당월 성별 제품 구매 패턴 분석을 해줘. 전년과 달라진 점도 분석해줘.
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 당해 당월 성별 제품 구매 패턴을 분석하여:
+1. 성별별 주요 구매 제품과 구매 패턴 분석: 각 성별의 선호 제품, 구매 비중, 구매 특성 분석
+2. 전년대비 주요 변화 분석: 성별별 구매 패턴 변화, 선호 제품 변화, 구매 비중 변화 분석
+3. 성별별 타겟팅 전략 제시: 각 성별의 구매 특성에 맞는 제품 전략, 마케팅 전략, 채널 전략 제시
 
 **중요**: 위 "성별별 데이터 요약"에 있는 성별만 분석하면 됩니다. 데이터가 없는 성별은 분석하지 마세요.
 
@@ -1432,7 +1575,7 @@ def analyze_gender_purchase_pattern(yyyymm, brd_cd):
 {json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 각 성별별로 하나의 섹션을 만들어야 합니다. 성별 목록: {', '.join(valid_genders)}
 
@@ -1444,45 +1587,26 @@ def analyze_gender_purchase_pattern(yyyymm, brd_cd):
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
-- 당해 제품별 성별 구매 패턴 분석
-- 전년대비 주요 변화 분석
-- 단기 전략 방향과 중장기 전략 방향을 구체적으로 시사
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
+{get_common_prompt_guidelines()}
+- **각 성별별 섹션 작성 시 반드시 포함해야 할 내용:**
+  1. 당해 제품별 성별 구매 패턴 분석: 해당 성별의 주요 구매 제품(상위 3~5개), 각 제품의 매출액, 구매 비중, 구매 특성 분석
+  2. 전년대비 주요 변화 분석: 전년 동월 대비 구매 패턴 변화, 선호 제품 변화, 구매 비중 변화, 변화율 분석
+  3. 변화 원인 분석: 구매 패턴 변화의 원인 (신규 제품 출시, 마케팅 효과, 트렌드 변화, 계절성 등)
+  4. 단기 전략 방향: 해당 성별의 구매 특성에 맞는 다음 분기/시즌 제품 전략, 마케팅 전략 제시
+  5. 중장기 전략 방향: 해당 성별의 구매 특성에 맞는 향후 6개월~1년 제품 포트폴리오 전략, 타겟팅 전략 제시
+- 성별별 데이터 요약의 current_top3, current_total, previous_total을 반드시 참고하여 분석
+- 각 제품별로 구체적인 수치(매출액, 구매 비중, 변화율)를 포함하여 작성
+- 전년대비 변화는 구체적인 변화율과 변화액을 포함하여 분석
+- 전략 방향은 실행 가능하고 구체적인 내용으로 작성
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "성별 구매 패턴 분석 (당해 전년 주요변화)",
-                "sections": [
-                    {"div": "기타", "sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "성별 구매 패턴 분석 (당해 전년 주요변화)")
         
         # JSON 데이터 생성
         json_data = {
@@ -1765,28 +1889,8 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "성별 구매 패턴 분석 (12개월 추이)",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "성별 구매 패턴 분석 (12개월 추이)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -1850,6 +1954,335 @@ def analyze_gender_purchase_pattern_overall(yyyymm, brd_cd):
         # Markdown도 저장 (analysis_data의 sections를 조합)
         markdown_content = f"# {analysis_data.get('title', '성별 구매 패턴 분석')}\n\n"
         for section in analysis_data.get('sections', []):
+            markdown_content += f"## {section.get('sub_title', '')}\n\n"
+            markdown_content += f"{section.get('ai_text', '')}\n\n"
+        save_markdown(markdown_content, filename)
+        
+        print(f"[OK] 분석 완료!\n")
+        return json_data
+        
+    finally:
+        engine.dispose()
+
+def analyze_gender_product_comprehensive(yyyymm, brd_cd):
+    """성별 제품별 통합 분석 (남성/여성/공용 제품별 분석 + 종합 인사이트)"""
+    print(f"\n{'='*60}")
+    print(f"성별 제품별 통합 분석 시작: {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
+    print(f"{'='*60}")
+    
+    # DB 연결
+    engine = get_db_engine()
+    
+    try:
+        # 분석 기간 계산 (당해/전년 동월 + 12개월 추이)
+        current_year = int(yyyymm[:4])
+        current_month = int(yyyymm[4:6])
+        previous_year = current_year - 1
+        yyyymm_py = f"{previous_year:04d}{current_month:02d}"
+        
+        # 12개월 추이 기간 계산
+        start_year = current_year
+        start_month = current_month - 11
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm
+        
+        print(f"분석 기간:")
+        print(f"  - 당해/전년 비교: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월")
+        print(f"  - 12개월 추이: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        
+        # 1. 당해/전년 동월 비교 쿼리 실행
+        sql_cypy = get_gender_purchase_pattern_query(yyyymm, yyyymm_py, brd_cd)
+        df_cypy = run_query(sql_cypy, engine)
+        records_cypy = df_cypy.to_dicts()
+        
+        # 2. 12개월 추이 쿼리 실행
+        sql_trend = get_gender_purchase_pattern_overall_query(yyyymm_start, yyyymm_end, brd_cd)
+        df_trend = run_query(sql_trend, engine)
+        records_trend = df_trend.to_dicts()
+        
+        if not records_cypy and not records_trend:
+            print("데이터가 없습니다.")
+            return None
+        
+        # 성별 매핑 (남성, 여성, 공용으로 정규화)
+        def normalize_gender(sex_nm):
+            """성별을 남성/여성/공용으로 정규화"""
+            if not sex_nm:
+                return '공용'
+            sex_nm = str(sex_nm).strip()
+            if '남성' in sex_nm or '남' in sex_nm or 'M' in sex_nm.upper():
+                return '남성'
+            elif '여성' in sex_nm or '여' in sex_nm or 'F' in sex_nm.upper():
+                return '여성'
+            else:
+                return '공용'
+        
+        # 성별별 데이터 분류
+        gender_data = {
+            '남성': {'cypy': [], 'trend': []},
+            '여성': {'cypy': [], 'trend': []},
+            '공용': {'cypy': [], 'trend': []}
+        }
+        
+        for record in records_cypy:
+            normalized_gender = normalize_gender(record.get('SEX_NM', ''))
+            gender_data[normalized_gender]['cypy'].append(record)
+        
+        for record in records_trend:
+            normalized_gender = normalize_gender(record.get('SEX_NM', ''))
+            gender_data[normalized_gender]['trend'].append(record)
+        
+        # 성별별 분석 결과 저장
+        gender_analyses = {}
+        
+        # 각 성별별로 분석 수행
+        for gender in ['공용', '남성', '여성']:
+            if not gender_data[gender]['cypy'] and not gender_data[gender]['trend']:
+                print(f"[SKIP] {gender} 제품 데이터가 없습니다.")
+                continue
+            
+            print(f"\n[{gender} 제품 분석 시작]")
+            
+            # 당해/전년 데이터 요약
+            cypy_records = gender_data[gender]['cypy']
+            trend_records = gender_data[gender]['trend']
+            
+            # 당해/전년 데이터 요약
+            current_data = [r for r in cypy_records if r.get('YYYY_MM', '').replace('-', '') == yyyymm]
+            previous_data = [r for r in cypy_records if r.get('YYYY_MM', '').replace('-', '') == yyyymm_py]
+            
+            current_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in current_data)
+            previous_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in previous_data)
+            
+            # TOP 3 아이템 (당해 기준)
+            current_items = sorted(current_data, key=lambda x: float(x.get('ACT_SALE_AMT', 0)), reverse=True)[:3]
+            current_top3 = [
+                {
+                    'class3': r.get('PRDT_HRRC3_NM', ''),
+                    'sale_amt': round(float(r.get('ACT_SALE_AMT', 0)) / 1000000, 2)
+                }
+                for r in current_items
+            ]
+            
+            # 12개월 추이 데이터 요약
+            trend_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in trend_records)
+            trend_top_items = {}
+            for r in trend_records:
+                class3 = r.get('PRDT_HRRC3_NM', '')
+                if class3 not in trend_top_items:
+                    trend_top_items[class3] = 0
+                trend_top_items[class3] += float(r.get('ACT_SALE_AMT', 0))
+            
+            trend_top5 = sorted(
+                [{'class3': k, 'total_sales': round(v / 1000000, 2)} for k, v in trend_top_items.items()],
+                key=lambda x: x['total_sales'],
+                reverse=True
+            )[:5]
+            
+            # 성별별 프롬프트 생성
+            prompt = f"""
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 {gender} 제품 전략 전문가야. {gender} 제품의 당해 당월 성별 구매 패턴과 12개월 추이를 종합 분석해줘.
+
+**분석 기간**
+- 당해/전년 비교: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월
+- 12개월 추이: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월
+
+**{gender} 제품 요약**
+- 당해 총 매출액: {current_total:,.0f}원 ({current_total/1000000:.2f}백만원)
+- 전년 총 매출액: {previous_total:,.0f}원 ({previous_total/1000000:.2f}백만원)
+- 전년대비 변화: {((current_total - previous_total) / previous_total * 100) if previous_total > 0 else 0:.2f}%
+- 12개월 총 매출액: {trend_total:,.0f}원 ({trend_total/1000000:.2f}백만원)
+
+**당해 TOP 3 아이템**
+{json_dumps_safe(current_top3, ensure_ascii=False, indent=2)}
+
+**12개월 TOP 5 아이템**
+{json_dumps_safe(trend_top5, ensure_ascii=False, indent=2)}
+
+**당해/전년 상세 데이터 샘플**
+{json_dumps_safe(current_data[:100], ensure_ascii=False, indent=2)}
+
+**12개월 추이 데이터 샘플**
+{json_dumps_safe(trend_records[:100], ensure_ascii=False, indent=2)}
+
+<분석 목표>
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 {gender} 제품에 대해:
+1. 당해 당월 {gender} 제품의 주요 구매 패턴과 전년대비 변화 분석
+2. 12개월간 {gender} 제품의 성장 추이와 핵심 아이템 식별
+3. {gender} 제품의 구매 특성에 맞는 단기 및 중장기 전략 제시
+
+<요구사항>
+{get_common_json_requirement()}
+
+다음 JSON 형식으로 응답해줘:
+{{
+  "title": "{gender} 제품 AI 인사이트",
+  "sections": [
+    {{
+      "div": "{gender}",
+      "sub_title": "{gender} 제품 AI 인사이트",
+      "ai_text": "{gender} 제품의 당해 당월 구매 패턴, 전년대비 변화, 12개월 추이, 핵심 아이템, 전략 방향을 종합적으로 분석한 내용"
+    }}
+  ]
+}}
+
+<작성 가이드라인>
+{get_common_prompt_guidelines()}
+- 당해 당월 {gender} 제품의 주요 구매 패턴과 전년대비 변화를 구체적인 수치와 함께 분석
+- 12개월간 {gender} 제품의 성장 추이와 핵심 아이템을 식별하고 분석
+- {gender} 제품의 구매 특성에 맞는 단기(다음 분기/시즌) 및 중장기(향후 6개월~1년) 전략을 구체적으로 제시
+- 모든 금액은 백만원 단위로 표시하고 정수로 표기
+- 구체적인 수치(매출액, 변화율, 비중 등)를 포함하여 작성
+
+{get_common_prompt_footer()}
+"""
+            
+            # LLM 호출
+            analysis_response = call_llm(prompt, max_tokens=3000)
+            
+            # JSON 파싱
+            analysis_data = parse_llm_json_response(analysis_response, f"{gender} 제품 AI 인사이트")
+            
+            gender_analyses[gender] = analysis_data
+        
+        # 종합 인사이트 생성
+        print(f"\n[종합 인사이트 분석 시작]")
+        
+        # 전체 데이터 요약
+        all_cypy_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in records_cypy)
+        all_trend_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in records_trend)
+        
+        # 성별별 매출 비중 계산
+        gender_sales_share = {}
+        for gender in ['공용', '남성', '여성']:
+            gender_cypy_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in gender_data[gender]['cypy'])
+            gender_trend_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in gender_data[gender]['trend'])
+            gender_sales_share[gender] = {
+                'cypy_total': round(gender_cypy_total / 1000000, 2),
+                'trend_total': round(gender_trend_total / 1000000, 2),
+                'cypy_share': round(gender_cypy_total / all_cypy_total * 100, 1) if all_cypy_total > 0 else 0,
+                'trend_share': round(gender_trend_total / all_trend_total * 100, 1) if all_trend_total > 0 else 0
+            }
+        
+        # 종합 인사이트 프롬프트 생성
+        comprehensive_prompt = f"""
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 전략 분석 전문가야. 남성, 여성, 공용 제품의 통합 분석을 바탕으로 종합 인사이트를 제시해줘.
+
+**분석 기간**
+- 당해/전년 비교: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월
+- 12개월 추이: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월
+
+**전체 요약**
+- 당해 총 매출액: {all_cypy_total:,.0f}원 ({all_cypy_total/1000000:.2f}백만원)
+- 12개월 총 매출액: {all_trend_total:,.0f}원 ({all_trend_total/1000000:.2f}백만원)
+
+**성별별 매출 비중**
+{json_dumps_safe(gender_sales_share, ensure_ascii=False, indent=2)}
+
+**성별별 분석 결과 요약**
+{json_dumps_safe({k: v.get('sections', [{}])[0].get('ai_text', '')[:500] if v.get('sections') else '' for k, v in gender_analyses.items()}, ensure_ascii=False, indent=2)}
+
+<분석 목표>
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 남성, 여성, 공용 제품을 통합 분석하여:
+1. 전체 제품 포트폴리오의 성과와 성장 패턴 종합 평가
+2. 성별별 제품의 상호 관계와 시너지 효과 분석
+3. 브랜드 전체 전략 방향과 우선순위 제시
+
+<요구사항>
+{get_common_json_requirement()}
+
+다음 JSON 형식으로 응답해줘:
+{{
+  "title": "종합분석",
+  "sections": [
+    {{
+      "div": "종합분석",
+      "sub_title": "종합분석-1",
+      "ai_text": "전체 제품 포트폴리오의 성과와 성장 패턴 종합 평가"
+    }},
+    {{
+      "div": "종합분석",
+      "sub_title": "종합분석-2",
+      "ai_text": "성별별 제품의 상호 관계와 시너지 효과 분석"
+    }},
+    {{
+      "div": "종합분석",
+      "sub_title": "종합분석-3",
+      "ai_text": "브랜드 전체 전략 방향과 우선순위 제시"
+    }}
+  ]
+}}
+
+<작성 가이드라인>
+{get_common_prompt_guidelines()}
+- 전체 제품 포트폴리오의 성과와 성장 패턴을 종합적으로 평가
+- 성별별 제품의 상호 관계와 시너지 효과를 구체적으로 분석
+- 브랜드 전체 전략 방향과 우선순위를 실행 가능한 구체적 액션플랜으로 제시
+- 각 섹션은 3-5줄 정도로 간결하고 핵심적인 내용으로 작성
+- 모든 금액은 백만원 단위로 표시하고 정수로 표기
+
+{get_common_prompt_footer()}
+"""
+        
+        # 종합 인사이트 LLM 호출
+        comprehensive_response = call_llm(comprehensive_prompt, max_tokens=2000)
+        comprehensive_data = parse_llm_json_response(comprehensive_response, "종합분석")
+        
+        # 최종 JSON 데이터 구성
+        final_sections = []
+        
+        # 성별별 섹션 추가 (공용, 남성, 여성 순서)
+        for gender in ['공용', '남성', '여성']:
+            if gender in gender_analyses:
+                sections = gender_analyses[gender].get('sections', [])
+                if sections:
+                    final_sections.extend(sections)
+        
+        # 종합분석 섹션 추가
+        if comprehensive_data.get('sections'):
+            final_sections.extend(comprehensive_data['sections'])
+        
+        # JSON 데이터 생성
+        json_data = {
+            'brand_cd': brd_cd,
+            'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
+            'yyyymm': yyyymm,
+            'yyyymm_py': yyyymm_py,
+            'key': '실판매출',
+            'sub_key': '성별구매패턴',
+            'analysis_data': {
+                'title': '성별 제품별 통합 분석',
+                'sections': final_sections
+            },
+            'summary': {
+                'total_sales_cypy': round(all_cypy_total / 1000000, 2),
+                'total_sales_trend': round(all_trend_total / 1000000, 2),
+                'gender_sales_share': gender_sales_share
+            },
+            'raw_data': {
+                'cypy_records_count': len(records_cypy),
+                'trend_records_count': len(records_trend),
+                'gender_data_summary': {
+                    gender: {
+                        'cypy_count': len(gender_data[gender]['cypy']),
+                        'trend_count': len(gender_data[gender]['trend'])
+                    }
+                    for gender in ['공용', '남성', '여성']
+                }
+            }
+        }
+        
+        # 파일 저장
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_실판매출_성별구매패턴"
+        save_json(json_data, filename)
+        
+        # Markdown 저장
+        markdown_content = f"# {json_data['analysis_data'].get('title', '성별 제품별 통합 분석')}\n\n"
+        for section in final_sections:
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
         save_markdown(markdown_content, filename)
@@ -2120,28 +2553,8 @@ def analyze_category_profit(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "카테고리별 수익성 분석 (당해 전년 주요변화)",
-                "sections": [
-                    {"div": "기타", "sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "카테고리별 수익성 분석 (당해 전년 주요변화)")
         
         # JSON 데이터 생성
         json_data = {
@@ -2397,16 +2810,16 @@ def analyze_category_profit(yyyymm, brd_cd):
 
 <분석 목표>
 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 12개월간 카테고리별 매출과 수익성 추이를 분석하여:
-1. 카테고리별 성과와 성장 패턴 파악
-2. 카테고리별 핵심 제품(카테고리/아이템) 식별
-3. 카테고리별 매출 기여도와 수익성 분석
-4. 카테고리별 전략적 인사이트 제시
+1. 카테고리별 성과와 성장 패턴 파악: 각 카테고리의 매출 추이, 성장률, 계절성 패턴 분석
+2. 카테고리별 핵심 제품(카테고리/아이템) 식별: 매출 기여도가 높은 제품과 수익성이 우수한 제품 식별
+3. 카테고리별 매출 기여도와 수익성 분석: 전체 매출 대비 비중, 수익률, 수익 기여도 분석
+4. 카테고리별 전략적 인사이트 제시: 성장 가능성, 리스크 요인, 포트폴리오 최적화 방안 제시
 
 <데이터 샘플>
 {json_dumps_safe(records[:100], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "카테고리별 수익성 분석 (12개월 추이)",
@@ -2416,47 +2829,26 @@ def analyze_category_profit(yyyymm, brd_cd):
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
-- 카테고리별 구매 패턴과 성장 추세 분석
-- 카테고리별 핵심 제품 카테고리와 아이템 식별
-- 카테고리별 수익성(수익률) 분석
-- 전년대비 변화에 대한 구체적 원인과 효과 분석
-- 단기 전략 방향과 중장기 전략 방향을 구체적으로 제시
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
+{get_common_prompt_guidelines()}
+- **각 섹션별 작성 시 반드시 포함해야 할 내용:**
+  1. 카테고리별 구매 패턴과 성장 추세 분석: 12개월간의 매출 추이, 성장률, 계절성 패턴, 특정 시기 급증/급감 원인 분석
+  2. 카테고리별 핵심 제품 카테고리와 아이템 식별: 매출 기여도가 높은 제품(상위 3~5개), 수익성이 우수한 제품, 신규 성장 제품 식별
+  3. 카테고리별 수익성(수익률) 분석: 각 카테고리의 수익률, 전체 대비 수익 기여도, 전년대비 수익성 변화 분석
+  4. 전년대비 변화에 대한 구체적 원인과 효과 분석: 매출 증가/감소 원인, 수익성 개선/악화 원인, 제품 포트폴리오 변화 영향 분석
+  5. 단기 전략 방향과 중장기 전략 방향을 구체적으로 제시: 다음 분기/시즌 전략, 향후 6개월~1년 포트폴리오 전략, 리스크 관리 방안
+- 카테고리별 매출액, 수익액, 수익률을 구체적인 수치로 포함하여 작성
+- 12개월 추이 데이터를 활용하여 성장 패턴과 계절성을 분석
+- 핵심 제품은 제품명, 카테고리명, 매출액, 수익률 등을 포함하여 구체적으로 식별
+- 전략 방향은 실행 가능하고 구체적인 내용으로 작성
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data_overall = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data_overall = {
-                "title": "카테고리별 수익성 분석 (12개월 추이)",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data_overall = parse_llm_json_response(analysis_response, "카테고리별 수익성 분석 (12개월 추이)")
         
         # 종합분석용 category_summary 저장
         category_summary_overall = category_summary
@@ -2970,46 +3362,20 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
   • [구체적인 전략 제안 3]
   위 "전략 제안을 위한 데이터 분석" 결과를 바탕으로 구체적이고 실행 가능한 전략을 제시하세요. 채널별 매출 기여도, 성장/하락 채널, 아이템 집중도 등을 고려하여 실용적인 전략을 제안하세요. 추가 설명 없이 3줄만 작성하세요.
 
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 채널별 구매 패턴과 성장 추세 분석
 - 채널별 핵심 아이템 식별
 - 전년대비 변화에 대한 구체적 원인과 효과 분석
 - 단기 전략 방향과 중장기 전략 방향을 구체적으로 제시
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "채널별 매출 종합분석 (당해 1월~현재월)",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "채널별 매출 종합분석 (당해 1월~현재월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -3066,6 +3432,240 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
         markdown_content = f"# {analysis_data.get('title', '채널별 매출 분석')}\n\n"
+        for section in analysis_data.get('sections', []):
+            markdown_content += f"## {section.get('sub_title', '')}\n\n"
+            markdown_content += f"{section.get('ai_text', '')}\n\n"
+        save_markdown(markdown_content, filename)
+        
+        print(f"[OK] 분석 완료!\n")
+        return json_data
+        
+    finally:
+        engine.dispose()
+
+def analyze_store_profit(yyyymm, brd_cd):
+    """영업이익_매장별직접이익 (당해/전년 동월 비교)"""
+    print(f"\n{'='*60}")
+    print(f"매장별 직접이익 분석 시작: {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
+    print(f"{'='*60}")
+    
+    # DB 연결
+    engine = get_db_engine()
+    
+    try:
+        # 분석 기간 계산 (당해/전년 동월)
+        current_year = int(yyyymm[:4])
+        current_month = int(yyyymm[4:6])
+        previous_year = current_year - 1
+        yyyymm_py = f"{previous_year:04d}{current_month:02d}"
+        
+        print(f"분석 기간: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월")
+        
+        # SQL 쿼리 실행
+        sql = get_store_profit_query(yyyymm, yyyymm_py, brd_cd)
+        df = run_query(sql, engine)
+        records = df.to_dicts()
+        
+        if not records:
+            print("데이터가 없습니다.")
+            return None
+        
+        # 데이터 요약
+        total_sales = sum(float(r.get('ACT_SALE_AMT', 0)) for r in records)
+        total_gross_profit = sum(float(r.get('GROSS_PRFT', 0)) for r in records)
+        total_direct_cost = sum(float(r.get('DCST', 0)) for r in records)
+        total_direct_profit = sum(float(r.get('DPRFT', 0)) for r in records)
+        unique_channels = len(set(r.get('CHNL_NM', '') for r in records))
+        unique_months = len(set(r.get('PST_YYYYMM', '') for r in records))
+        
+        print(f"총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)")
+        print(f"총 매출총이익: {total_gross_profit:,.0f}원 ({total_gross_profit/1000000:.2f}백만원)")
+        print(f"총 직접비용: {total_direct_cost:,.0f}원 ({total_direct_cost/1000000:.2f}백만원)")
+        print(f"총 직접이익: {total_direct_profit:,.0f}원 ({total_direct_profit/1000000:.2f}백만원)")
+        print(f"채널 수: {unique_channels}개")
+        print(f"분석 월 수: {unique_months}개월")
+        
+        # 채널별 요약 데이터 생성 (당해/전년 비교)
+        channel_comparison = {}
+        for record in records:
+            chnl_nm = record.get('CHNL_NM', '기타')
+            pycy = record.get('PYCY', '')
+            sale_amt = float(record.get('ACT_SALE_AMT', 0))
+            gross_profit = float(record.get('GROSS_PRFT', 0))
+            direct_cost = float(record.get('DCST', 0))
+            direct_profit = float(record.get('DPRFT', 0))
+            
+            if chnl_nm not in channel_comparison:
+                channel_comparison[chnl_nm] = {
+                    'current_total': 0,
+                    'previous_total': 0,
+                    'current_profit': 0,
+                    'previous_profit': 0,
+                    'current_direct_profit': 0,
+                    'previous_direct_profit': 0,
+                    'current_direct_cost': 0,
+                    'previous_direct_cost': 0
+                }
+            
+            if pycy == '당해':
+                channel_comparison[chnl_nm]['current_total'] += sale_amt
+                channel_comparison[chnl_nm]['current_profit'] += gross_profit
+                channel_comparison[chnl_nm]['current_direct_profit'] += direct_profit
+                channel_comparison[chnl_nm]['current_direct_cost'] += direct_cost
+            elif pycy == '전년':
+                channel_comparison[chnl_nm]['previous_total'] += sale_amt
+                channel_comparison[chnl_nm]['previous_profit'] += gross_profit
+                channel_comparison[chnl_nm]['previous_direct_profit'] += direct_profit
+                channel_comparison[chnl_nm]['previous_direct_cost'] += direct_cost
+        
+        # 당해/전년 데이터가 모두 있는 채널만 필터링
+        valid_channels = [
+            chnl for chnl, data in channel_comparison.items()
+            if data['current_total'] > 0 and data['previous_total'] > 0
+        ]
+        
+        # 채널별 수익률 계산
+        for chnl_nm in valid_channels:
+            data = channel_comparison[chnl_nm]
+            data['current_profit_rate'] = round((data['current_profit'] / data['current_total'] * 100) if data['current_total'] > 0 else 0, 1)
+            data['previous_profit_rate'] = round((data['previous_profit'] / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
+            data['current_direct_profit_rate'] = round((data['current_direct_profit'] / data['current_total'] * 100) if data['current_total'] > 0 else 0, 1)
+            data['previous_direct_profit_rate'] = round((data['previous_direct_profit'] / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
+            data['sales_change'] = round(data['current_total'] - data['previous_total'], 0)
+            data['sales_change_pct'] = round(((data['current_total'] - data['previous_total']) / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
+            data['direct_profit_change'] = round(data['current_direct_profit'] - data['previous_direct_profit'], 0)
+            data['direct_profit_change_pct'] = round(((data['current_direct_profit'] - data['previous_direct_profit']) / data['previous_direct_profit'] * 100) if data['previous_direct_profit'] != 0 else 0, 1)
+            # 백만원 단위로 변환
+            data['current_total'] = round(data['current_total'] / 1000000, 2)
+            data['previous_total'] = round(data['previous_total'] / 1000000, 2)
+            data['current_profit'] = round(data['current_profit'] / 1000000, 2)
+            data['previous_profit'] = round(data['previous_profit'] / 1000000, 2)
+            data['current_direct_profit'] = round(data['current_direct_profit'] / 1000000, 2)
+            data['previous_direct_profit'] = round(data['previous_direct_profit'] / 1000000, 2)
+            data['current_direct_cost'] = round(data['current_direct_cost'] / 1000000, 2)
+            data['previous_direct_cost'] = round(data['previous_direct_cost'] / 1000000, 2)
+            data['sales_change'] = round(data['sales_change'] / 1000000, 2)
+            data['direct_profit_change'] = round(data['direct_profit_change'] / 1000000, 2)
+        
+        if not valid_channels:
+            print("당해/전년 데이터가 모두 있는 채널이 없습니다.")
+            return None
+        
+        # 채널별 섹션 템플릿 생성
+        channel_sections_template = ',\n    '.join([
+            '{{\n      "div": "{channel}",\n      "sub_title": "{channel} 매장별 직접이익 분석",\n      "ai_text": "각 {channel} 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘. (예: • {channel}의 직접이익은 1,234백만원으로 전년(1,100백만원) 대비 +12.2% 증가했습니다. 직접이익률은 15.2%로 전년(14.5%) 대비 +0.7%p 개선되었습니다. 매출 증가와 직접비용 효율화가 주요 원인입니다.)"\n    }}'.format(channel=channel)
+            for channel in valid_channels
+        ])
+        
+        # LLM 프롬프트 생성 (JSON 형식 응답 요청)
+        prompt = f"""
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 매장 수익성 전문가야. 각 채널별 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘.
+
+**분석 기간**
+- 당해: {current_year}년 {current_month}월 ({yyyymm})
+- 전년: {previous_year}년 {current_month}월 ({yyyymm_py})
+
+**전체 요약**
+- 총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)
+- 총 매출총이익: {total_gross_profit:,.0f}원 ({total_gross_profit/1000000:.2f}백만원)
+- 총 직접비용: {total_direct_cost:,.0f}원 ({total_direct_cost/1000000:.2f}백만원)
+- 총 직접이익: {total_direct_profit:,.0f}원 ({total_direct_profit/1000000:.2f}백만원)
+- 직접이익률: {round((total_direct_profit / total_sales * 100) if total_sales > 0 else 0, 1)}%
+- 분석 가능한 채널 수: {len(valid_channels)}개
+- 분석 채널 목록: {', '.join(valid_channels)}
+
+**채널별 데이터 요약**
+{json_dumps_safe(channel_comparison, ensure_ascii=False, indent=2)}
+
+<분석 목표>
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘:
+1. 채널별 직접이익과 직접이익률 분석: 각 채널의 직접이익, 직접이익률, 직접비용 구조 분석
+2. 전년대비 주요 변화 분석: 직접이익 변화, 직접이익률 변화, 직접비용 변화, 매출 변화 분석
+3. 채널별 수익성 개선 방안 제시: 직접이익률 개선을 위한 구체적인 방안 제시
+
+**중요**: 위 "채널별 데이터 요약"에 있는 채널만 분석하면 됩니다. 데이터가 없는 채널은 분석하지 마세요.
+
+<데이터 샘플>
+{json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
+
+<요구사항>
+{get_common_json_requirement()}
+
+각 채널별로 하나의 섹션을 만들어야 합니다. 채널 목록: {', '.join(valid_channels)}
+
+{{
+  "title": "매장별 직접이익 분석 (당해 전년 주요변화)",
+  "sections": [
+    {channel_sections_template}
+  ]
+}}
+
+<작성 가이드라인>
+{get_common_prompt_guidelines()}
+- **각 채널별 섹션 작성 시 반드시 포함해야 할 내용:**
+  1. 당해 채널별 직접이익과 직접이익률 분석: 해당 채널의 직접이익, 직접이익률, 직접비용 구조 분석
+  2. 전년대비 주요 변화 분석: 직접이익 변화, 직접이익률 변화, 직접비용 변화, 매출 변화, 변화율 분석
+  3. 변화 원인 분석: 직접이익 변화의 원인 (매출 증가, 직접비용 효율화, 비용 구조 개선 등)
+  4. 단기 전략 방향: 해당 채널의 직접이익률 개선을 위한 다음 분기/시즌 전략 제시
+  5. 중장기 전략 방향: 해당 채널의 직접이익률 개선을 위한 향후 6개월~1년 전략 제시
+- 채널별 데이터 요약의 current_direct_profit, previous_direct_profit, current_direct_profit_rate, previous_direct_profit_rate, sales_change, direct_profit_change를 반드시 참고하여 분석
+- 각 채널별로 구체적인 수치(직접이익, 직접이익률, 변화율)를 포함하여 작성
+- 전년대비 변화는 구체적인 변화율과 변화액을 포함하여 분석
+- 전략 방향은 실행 가능하고 구체적인 내용으로 작성
+
+{get_common_prompt_footer()}
+"""
+        
+        # LLM 호출 (JSON 응답)
+        analysis_response = call_llm(prompt, max_tokens=4000)
+        
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "매장별 직접이익 분석 (당해 전년 주요변화)")
+        
+        # JSON 데이터 생성
+        json_data = {
+            'brand_cd': brd_cd,
+            'brand_name': BRAND_CODE_MAP.get(brd_cd, brd_cd),
+            'yyyymm': yyyymm,
+            'yyyymm_py': yyyymm_py,
+            'key': '영업이익',
+            'sub_key': '매장별직접이익',
+            'analysis_data': analysis_data,
+            'summary': {
+                'total_sales': round(total_sales / 1000000, 2),
+                'total_gross_profit': round(total_gross_profit / 1000000, 2),
+                'total_direct_cost': round(total_direct_cost / 1000000, 2),
+                'total_direct_profit': round(total_direct_profit / 1000000, 2),
+                'direct_profit_rate': round((total_direct_profit / total_sales * 100) if total_sales > 0 else 0, 1),
+                'unique_channels': unique_channels,
+                'unique_months': unique_months,
+                'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
+            },
+            'channel_summary': channel_comparison,
+            'raw_data': {
+                'sample_records': [
+                    {
+                        'PST_YYYYMM': r.get('PST_YYYYMM', ''),
+                        'PYCY': r.get('PYCY', ''),
+                        'CHNL_NM': r.get('CHNL_NM', ''),
+                        'ACT_SALE_AMT': round(float(r.get('ACT_SALE_AMT', 0)) / 1000000, 2),
+                        'GROSS_PRFT': round(float(r.get('GROSS_PRFT', 0)) / 1000000, 2),
+                        'DCST': round(float(r.get('DCST', 0)) / 1000000, 2),
+                        'DPRFT': round(float(r.get('DPRFT', 0)) / 1000000, 2)
+                    }
+                    for r in records[:50]
+                ],
+                'total_records_count': len(records)
+            }
+        }
+        
+        # 파일 저장
+        yyyymm_short = yyyymm[2:]  # 202510 -> 2510
+        filename = f"KR_{yyyymm_short}_{brd_cd}_영업이익_매장별직접이익"
+        save_json(json_data, filename)
+        
+        # Markdown도 저장 (analysis_data의 sections를 조합)
+        markdown_content = f"# {analysis_data.get('title', '매장별 직접이익 분석')}\n\n"
         for section in analysis_data.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
@@ -3332,26 +3932,14 @@ def analyze_operating_expense_by_ctgr1(yyyymm, brd_cd, ctgr1, detail_records, en
     # 7. LLM 호출 (JSON 응답)
     analysis_response = call_llm(prompt, max_tokens=4000)
     
-    # JSON 파싱 (마크다운 코드 블록 제거)
-    analysis_response = analysis_response.strip()
-    if analysis_response.startswith('```json'):
-        analysis_response = analysis_response[7:]
-    if analysis_response.startswith('```'):
-        analysis_response = analysis_response[3:]
-    if analysis_response.endswith('```'):
-        analysis_response = analysis_response[:-3]
-    analysis_response = analysis_response.strip()
-    
-    try:
-        analysis_data = json.loads(analysis_response)
-        # sections에 div 필드 추가 (종합분석-1, 종합분석-2, ...)
-        for idx, section in enumerate(analysis_data.get('sections', []), 1):
-            if 'div' not in section:
-                section['div'] = f'종합분석-{idx}'
-    except json.JSONDecodeError as e:
-        print(f"[WARNING] JSON 파싱 실패: {e}")
-        print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-        # 기본 구조로 대체
+    # JSON 파싱
+    analysis_data = parse_llm_json_response(analysis_response, "영업비 광고선전비 AI 분석")
+    # sections에 div 필드 추가 (종합분석-1, 종합분석-2, ...)
+    for idx, section in enumerate(analysis_data.get('sections', []), 1):
+        if 'div' not in section:
+            section['div'] = f'종합분석-{idx}'
+    # 기본 구조 보완
+    if not analysis_data.get('sections'):
         analysis_data = {
             "title": f"{ctgr1} 분석",
             "sections": [
@@ -3796,34 +4384,18 @@ def analyze_discount_rate_overall(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-            # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3)
-            for idx, section in enumerate(analysis_data.get('sections', []), 1):
-                if 'div' not in section:
-                    section['div'] = f'종합분석-{idx}'
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "할인율 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "전략 우수 채널", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "주의 필요 채널", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "AI 권장 사항", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "할인율 종합분석")
+        # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3)
+        for idx, section in enumerate(analysis_data.get('sections', []), 1):
+            if 'div' not in section:
+                section['div'] = f'종합분석-{idx}'
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "주의 필요 채널", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "AI 권장 사항", "ai_text": ""}
+            ])
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -4176,35 +4748,19 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-            # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3, 종합분석-4)
-            for idx, section in enumerate(analysis_data.get('sections', []), 1):
-                if 'div' not in section:
-                    section['div'] = f'종합분석-{idx}'
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "매장효율성 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "우수 점포 생산성", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "대응 필요 매장", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "AI 권장사항", "ai_text": ""},
-                    {"div": "종합분석-4", "sub_title": "최적의 시나리오", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "매장효율성 종합분석")
+        # sections에 div 필드 추가 (종합분석-1, 종합분석-2, 종합분석-3, 종합분석-4)
+        for idx, section in enumerate(analysis_data.get('sections', []), 1):
+            if 'div' not in section:
+                section['div'] = f'종합분석-{idx}'
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 4:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "대응 필요 매장", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "AI 권장사항", "ai_text": ""},
+                {"div": "종합분석-4", "sub_title": "최적의 시나리오", "ai_text": ""}
+            ])
         
         # JSON 데이터 생성
         json_data = {
@@ -4692,30 +5248,8 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "아이템별 매출 종합분석 (당해 1월~현재월)",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "시즌 트렌드", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "카테고리", "ai_text": "데이터 분석 중"},
-                    {"div": "종합분석-3", "sub_title": "핵심액션", "ai_text": "데이터 분석 중"}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "아이템별 매출 종합분석 (당해 1월~현재월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -5172,30 +5706,8 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "아이템별 재고 종합분석 (당해 1월~현재월)",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "조기경보", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "긍정신호", "ai_text": "데이터 분석 중"},
-                    {"div": "종합분석-3", "sub_title": "인사이트", "ai_text": "데이터 분석 중"}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "아이템별 재고 종합분석 (당해 1월~현재월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -5322,7 +5834,7 @@ if __name__ == '__main__':
     # 분석 기간 설정
     # ========================================================================
     # 방법 1: 한 달만 분석
-    yyyymm_list = generate_yyyymm_list('202511')
+    yyyymm_list = generate_yyyymm_list('202512')
     
     # 방법 2: 여러 달 분석 (2024년 1월 ~ 2025년 10월)
     # yyyymm_list = generate_yyyymm_list('202407', '202508')
@@ -5358,16 +5870,16 @@ if __name__ == '__main__':
             
             try:
                 # 분석 실행 (원하는 분석만 주석 해제)
-                analyze_channel_sales(yyyymm, brd_cd)  # 실판매출_채널별매출분석
-                # analyze_gender_purchase_pattern(yyyymm, brd_cd)  # 성별 구매 패턴 분석 (4-1-3-1)
-                # analyze_gender_purchase_pattern_overall(yyyymm, brd_cd)  # 성별 구매 패턴 종합분석 (4-1-3-2)
-                analyze_category_profit(yyyymm, brd_cd)  # 영업이익_아이템별직접이익
-                analyze_operating_expense(yyyymm, brd_cd)  # 영업비_각 계정별 분석
-                analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석
-                analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석
-                analyze_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출추세 (당해 1월~현재월)
-                analyze_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출추세 (당해 1월~현재월)
-                analyze_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고추세 (당해 1월~현재월)
+                # analyze_channel_sales(yyyymm, brd_cd)  # 실판매출_채널별매출분석
+                # analyze_gender_product_comprehensive(yyyymm, brd_cd)  # 성별 제품별 통합 분석 (남성/여성/공용 + 종합)
+                # analyze_category_profit(yyyymm, brd_cd)  # 영업이익_아이템별직접이익
+                analyze_store_profit(yyyymm, brd_cd)  # 영업이익_매장별직접이익
+                # analyze_operating_expense(yyyymm, brd_cd)  # 영업비_각 계정별 분석
+                # analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석
+                # analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석
+                # analyze_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출추세 (당해 1월~현재월)
+                # analyze_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출추세 (당해 1월~현재월)
+                # analyze_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고추세 (당해 1월~현재월)
             except Exception as e:
                 print(f"[ERROR] 브랜드 {brd_cd} 분석 중 오류 발생: {e}")
                 print(f"[ERROR] 다음 브랜드로 계속 진행합니다...\n")

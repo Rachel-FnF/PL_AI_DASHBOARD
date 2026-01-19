@@ -90,24 +90,27 @@ def get_db_engine():
     """Snowflake DB 연결 엔진 생성"""
     account = os.getenv('SNOWFLAKE_ACCOUNT')
     user = os.getenv('SNOWFLAKE_USER')
-    password = os.getenv('SNOWFLAKE_PASSWORD')
+    authenticator = os.getenv('SNOWFLAKE_AUTHENTICATOR')
+    # password = os.getenv('SNOWFLAKE_PASSWORD')
     database = os.getenv('SNOWFLAKE_DATABASE')
-    schema = os.getenv('SNOWFLAKE_SCHEMA')
+    # schema = os.getenv('SNOWFLAKE_SCHEMA')
     warehouse = os.getenv('SNOWFLAKE_WAREHOUSE')
-    role = os.getenv('SNOWFLAKE_ROLE')
+    # role = os.getenv('SNOWFLAKE_ROLE')
     
-    if not all([account, user, password, database, schema, warehouse, role]):
+    # if not all([account, user, password, database, schema, warehouse, role]):
+    if not all([account, user, database, warehouse, authenticator]):
         raise ValueError("Snowflake 환경 변수가 설정되지 않았습니다. .env 파일을 확인하세요.")
     
     return create_engine(
         URL(
             account=account,
             user=user,
-            password=password,
+            # password=password,
+            authenticator=authenticator,
             database=database,
-            schema=schema,
+            # schema=schema,
             warehouse=warehouse,
-            role=role,
+            # role=role,
         )
     )
 
@@ -190,6 +193,63 @@ def reset_token_counter():
     """토큰 카운터 초기화"""
     global _total_tokens_used
     _total_tokens_used = {'input': 0, 'output': 0}
+
+# ============================================================================
+# 공통 프롬프트 템플릿
+# ============================================================================
+def get_common_prompt_guidelines():
+    """공통 프롬프트 가이드라인 텍스트 반환"""
+    return """- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
+- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
+- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
+- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
+- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
+- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)"""
+
+def get_common_json_requirement():
+    """공통 JSON 요구사항 텍스트 반환"""
+    return """아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘."""
+
+def get_common_prompt_footer():
+    """공통 프롬프트 푸터 텍스트 반환"""
+    return """위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:"""
+
+def parse_llm_json_response(response_text, default_title="분석 결과"):
+    """
+    LLM 응답에서 JSON을 파싱하는 공통 함수
+    
+    Args:
+        response_text: LLM 응답 텍스트
+        default_title: 파싱 실패 시 사용할 기본 제목
+    
+    Returns:
+        dict: 파싱된 JSON 데이터
+    """
+    # JSON 파싱 (마크다운 코드 블록 제거)
+    response_text = response_text.strip()
+    if response_text.startswith('```json'):
+        response_text = response_text[7:]
+    if response_text.startswith('```'):
+        response_text = response_text[3:]
+    if response_text.endswith('```'):
+        response_text = response_text[:-3]
+    response_text = response_text.strip()
+    
+    try:
+        analysis_data = json.loads(response_text)
+    except json.JSONDecodeError as e:
+        print(f"[WARNING] JSON 파싱 실패: {e}")
+        print(f"[WARNING] 응답 내용: {response_text[:500]}")
+        # 기본 구조로 대체
+        analysis_data = {
+            "title": default_title,
+            "sections": [
+                {"div": "종합분석-1", "sub_title": "분석 결과", "ai_text": response_text}
+            ]
+        }
+    
+    return analysis_data
 
 # ============================================================================
 # 파일 저장
@@ -1018,7 +1078,7 @@ ORDER BY A.YYMM DESC, MGMT_CHNL_NM,ITEM_NM, SALE_AMT DESC
 {json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 각 채널별로 하나의 섹션을 만들어야 합니다. 채널 목록: {', '.join(valid_channels)}
 
@@ -1034,45 +1094,19 @@ ORDER BY A.YYMM DESC, MGMT_CHNL_NM,ITEM_NM, SALE_AMT DESC
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 당해 채널별 TOP 3 매출 아이템과 그중 어떤 제품이 판매율이 좋았는지
 - 전년대비 주요 변화 분석
 - 단기 전략 방향과 중장기 전략 방향을 구체적으로 시사
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "채널별 매출 분석 (12개월 추이)",
-                "sections": [
-                    {"sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "채널별 매출 분석 (12개월 추이)")
         
         # JSON 데이터 생성
         json_data = {
@@ -1251,7 +1285,7 @@ ORDER BY A.YYMM DESC, MGMT_CHNL_NM,ITEM_NM, SALE_AMT DESC
 {json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "브랜드별 채널 매출 종합분석",
@@ -1276,43 +1310,25 @@ ORDER BY A.YYMM DESC, MGMT_CHNL_NM,ITEM_NM, SALE_AMT DESC
 
 <작성 가이드라인>
 - 각 섹션의 ai_text는 최대 2줄을 넘지 않도록 간결하게 작성
-- 숫자는 백만원 단위로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 모든 채널의 데이터를 종합적으로 분석 (특정 채널만이 아닌 전체 관점)
 - 채널별 top3가 아니라 전체 채널을 종합적으로 분석
 - 구체적인 채널명과 수치를 포함하여 실용적인 내용으로 작성
-- 줄바꿈은 반드시 \\n을 사용하여 표시
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (종합분석용)
         analysis_response_overall = call_llm(prompt_overall, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response_overall = analysis_response_overall.strip()
-        if analysis_response_overall.startswith('```json'):
-            analysis_response_overall = analysis_response_overall[7:]
-        if analysis_response_overall.startswith('```'):
-            analysis_response_overall = analysis_response_overall[3:]
-        if analysis_response_overall.endswith('```'):
-            analysis_response_overall = analysis_response_overall[:-3]
-        analysis_response_overall = analysis_response_overall.strip()
-        
-        try:
-            analysis_data_overall = json.loads(analysis_response_overall)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response_overall[:500]}")
-            # 기본 구조로 대체
-            analysis_data_overall = {
-                "title": "브랜드별 채널 매출 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "최고 성과 채널", "ai_text": analysis_response_overall},
-                    {"div": "종합분석-2", "sub_title": "개선 필요 채널", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "핵심 제안", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data_overall = parse_llm_json_response(analysis_response_overall, "브랜드별 채널 매출 종합분석")
+        # 기본 구조 보완
+        if len(analysis_data_overall.get('sections', [])) < 3:
+            analysis_data_overall['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "개선 필요 채널", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "핵심 제안", "ai_text": ""}
+            ])
         
         # ============================================================
         # 채널별 섹션과 종합분석을 하나로 통합
@@ -1566,7 +1582,7 @@ def analyze_outbound_category_sales(yyyymm, brd_cd):
 3. 리스크 요소를 파악하고 종합 인사이트 도출
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "카테고리별 수익성 분석 (당해 전년 주요변화)",
@@ -1610,17 +1626,11 @@ def analyze_outbound_category_sales(yyyymm, brd_cd):
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 강세 아이템과 약세 아이템을 구체적으로 언급
 - 전체 관점에서의 변화와 리스크를 명확히 분석
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         ai_response = call_llm(prompt)
@@ -1859,7 +1869,7 @@ ORDER BY C.YYYYMM DESC
 {json_dumps_safe(agent_summary_sorted[:30], ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "오프라인 대리상 점당매출 종합분석",
@@ -1883,47 +1893,25 @@ ORDER BY C.YYYYMM DESC
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 우수 대리상: 당해 총 매출이 높고 전년 대비 성장률이 우수한 대리상 분석
 - 수익성 개선 필요: 당해 총 매출이 낮거나 전년 대비 감소한 대리상 분석
 - 인사이트: 대리상별 성과 차이의 원인과 개선 방안 제시
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "오프라인 대리상 점당매출 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "우수 대리상", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "수익성 개선 필요", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "인사이트", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "오프라인 대리상 점당매출 종합분석")
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "수익성 개선 필요", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "인사이트", "ai_text": ""}
+            ])
         
         # JSON 데이터 구성
         json_data = {
@@ -2155,7 +2143,7 @@ def analyze_discount_rate(yyyymm, brd_cd):
 3. AI 권장사항: 채널별 할인율 전략에 대한 구체적인 권장사항과 액션플랜
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "채널별 할인율 종합분석",
@@ -2179,46 +2167,25 @@ def analyze_discount_rate(yyyymm, brd_cd):
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
+{get_common_prompt_guidelines()}
 - 할인율은 % 단위로 표시하고, 변화율은 %p(퍼센트포인트)로 표시
 - 채널별 할인율 수치와 전년대비 변화율을 구체적으로 언급
 - 추세 데이터를 활용하여 월별 할인율 변화 패턴도 분석
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "채널별 할인율 종합분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "할인율 전략이 우수한 채널", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "주의 필요 채널", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "AI 권장사항", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "채널별 할인율 종합분석")
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "주의 필요 채널", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "AI 권장사항", "ai_text": ""}
+            ])
         
         # JSON 데이터 생성
         json_data = {
@@ -2616,7 +2583,7 @@ def analyze_operating_expense(yyyymm, brd_cd):
 {json_dumps_safe(brand_vs_all_current_ytd, ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "영업비 종합분석",
@@ -2650,8 +2617,7 @@ def analyze_operating_expense(yyyymm, brd_cd):
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - **중요: 각 섹션에서 어떤 비교인지 반드시 명시해야 함**
   - "전년/당해 동월 비교" 섹션: "{yyyymm_py} VS {yyyymm}" 비교임을 명시 (전년 동월 → 당해 동월)
   - "누적 YTD 비교" 섹션: "전년 누적({previous_year}01~{yyyymm_py}) VS 당해 누적({current_year}01~{yyyymm})" 비교임을 명시
@@ -2660,40 +2626,15 @@ def analyze_operating_expense(yyyymm, brd_cd):
 - 영업비 계정별(광고비, 인건비, 복리후생비, 지급수수료, 임차료, 수주회, 세금과공과, 감가상각비, 기타) 분석
 - 각 비교에서 변화율(%)을 계산하여 제시
 - 단기 전략 방향과 중장기 전략 방향을 구체적으로 시사
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "영업비 종합분석",
-                "sections": [
-                    {"sub_title": "분석 결과", "ai_text": analysis_response}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "영업비 종합분석")
         
         # JSON 데이터 구성
         total_expense_current_month_k = round(total_expense_current_month / 1000, 0)
@@ -2935,7 +2876,7 @@ ORDER BY A.YYMM DESC, CHNL_CD, SALE_AMT DESC
 3. 전략 포인트: 데이터를 바탕으로 한 구체적인 전략 제안
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "월별 채널별 매출 추세 분석",
@@ -2959,47 +2900,25 @@ ORDER BY A.YYMM DESC, CHNL_CD, SALE_AMT DESC
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 월별 주요인사이트: 각 월의 특징과 변화 원인을 분석
 - 채널 트렌드: 채널별 성장률, 비중 변화, 채널 간 비교를 분석
 - 전략 포인트: 실행 가능한 구체적인 전략 제안
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "월별 채널별 매출 추세 분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "월별 주요 인사이트", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "채널 트렌드", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "전략 포인트", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "월별 채널별 매출 추세 분석")
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "채널 트렌드", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "전략 포인트", "ai_text": ""}
+            ])
         
         # JSON 데이터 구성
         json_data = {
@@ -3255,7 +3174,7 @@ order by a.yymm
 {json_dumps_safe(category_items, ensure_ascii=False, indent=2)}
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "월별 아이템별 매출 추세 분석",
@@ -3279,47 +3198,25 @@ order by a.yymm
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 시즌별 의류의 월별 추이와 특징을 분석
 - 카테고리별 ACC의 월별 추이와 특징을 분석
 - 상품 기획 및 재고 관리 관점에서의 액션 아이템 제시
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "월별 아이템별 매출 추세 분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "시즌 트렌드", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "카테고리", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "핵심 액션", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "월별 아이템별 매출 추세 분석")
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "카테고리", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "핵심 액션", "ai_text": ""}
+            ])
         
         # JSON 데이터 구성
         json_data = {
@@ -3620,7 +3517,7 @@ order by yyyymm
 3. 핵심액션: 재고 관리 개선을 위한 구체적인 실행 방안 제시
 
 <요구사항>
-아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
+{get_common_json_requirement()}
 
 {{
   "title": "월별 아이템별 재고 추세 분석",
@@ -3644,47 +3541,25 @@ order by yyyymm
 }}
 
 <작성 가이드라인>
-- 각 섹션의 ai_text는 구체적이고 실용적인 내용으로 작성
-- 숫자는 천 단위(k)로 표시하고 절대 변형하지 말 것
+{get_common_prompt_guidelines()}
 - 조기경보: 위험 수준이 높은 아이템을 우선순위로 분석
 - 긍정신호: 잘 관리되고 있는 아이템의 성공 요인 분석
 - 핵심액션: 실행 가능한 구체적인 액션 아이템 제시
-- 불릿 포인트는 마크다운 형식(-, •) 사용 가능
-- 줄바꿈은 반드시 \\n을 사용하여 표시 (예: "첫 번째 줄\\n두 번째 줄")
-- ai_text 내에서 여러 문단이나 항목을 나눌 때는 \\n\\n을 사용
-- 불릿 포인트나 리스트 항목 사이에는 \\n을 사용
-- 반드시 유효한 JSON 형식으로만 응답 (마크다운 코드 블록 없이)
 
-위 데이터를 바탕으로 JSON 형식으로 분석 결과를 반환해줘:
+{get_common_prompt_footer()}
 """
         
         # LLM 호출 (JSON 응답)
         analysis_response = call_llm(prompt, max_tokens=4000)
         
-        # JSON 파싱 (마크다운 코드 블록 제거)
-        analysis_response = analysis_response.strip()
-        if analysis_response.startswith('```json'):
-            analysis_response = analysis_response[7:]
-        if analysis_response.startswith('```'):
-            analysis_response = analysis_response[3:]
-        if analysis_response.endswith('```'):
-            analysis_response = analysis_response[:-3]
-        analysis_response = analysis_response.strip()
-        
-        try:
-            analysis_data = json.loads(analysis_response)
-        except json.JSONDecodeError as e:
-            print(f"[WARNING] JSON 파싱 실패: {e}")
-            print(f"[WARNING] 응답 내용: {analysis_response[:500]}")
-            # 기본 구조로 대체
-            analysis_data = {
-                "title": "월별 아이템별 재고 추세 분석",
-                "sections": [
-                    {"div": "종합분석-1", "sub_title": "조기경보", "ai_text": analysis_response},
-                    {"div": "종합분석-2", "sub_title": "긍정신호", "ai_text": ""},
-                    {"div": "종합분석-3", "sub_title": "핵심액션", "ai_text": ""}
-                ]
-            }
+        # JSON 파싱
+        analysis_data = parse_llm_json_response(analysis_response, "월별 아이템별 재고 추세 분석")
+        # 기본 구조 보완
+        if len(analysis_data.get('sections', [])) < 3:
+            analysis_data['sections'].extend([
+                {"div": "종합분석-2", "sub_title": "긍정신호", "ai_text": ""},
+                {"div": "종합분석-3", "sub_title": "핵심액션", "ai_text": ""}
+            ])
         
         # JSON 데이터 구성
         json_data = {
@@ -3779,7 +3654,7 @@ if __name__ == '__main__':
     # 분석 기간 설정
     # ========================================================================
     # 방법 1: 한 달만 분석
-    yyyymm_list = generate_yyyymm_list('202509')
+    yyyymm_list = generate_yyyymm_list('202512')
     
     # 방법 2: 여러 달 분석 (2024년 1월 ~ 2025년 10월)
     # yyyymm_list = generate_yyyymm_list('202501', '202510')
@@ -3815,14 +3690,14 @@ if __name__ == '__main__':
             
             try:
                 # 분석 실행 (원하는 분석만 주석 해제)
-                analyze_retail_channel_top3_sales(yyyymm, brd_cd)  # 리테일매출 채널별 TOP3 분석 (완료)
+                # analyze_retail_channel_top3_sales(yyyymm, brd_cd)  # 리테일매출 채널별 TOP3 분석 (완료)
                 analyze_outbound_category_sales(yyyymm, brd_cd)  # 출고매출 카테고리별 분석 (완료)
-                analyze_agent_store_sales(yyyymm, brd_cd)  # 대리상 점당매출 종합분석
-                analyze_discount_rate(yyyymm, brd_cd)  # 할인율 종합분석 (완료)
-                analyze_operating_expense(yyyymm, brd_cd)  # 영업비 종합분석 (완료)
-                analyze_monthly_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출 추세 분석 (완료)
-                analyze_monthly_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출 추세 분석
-                analyze_monthly_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고 추세 분석 (완료)
+                # analyze_agent_store_sales(yyyymm, brd_cd)  # 대리상 점당매출 종합분석
+                # analyze_discount_rate(yyyymm, brd_cd)  # 할인율 종합분석 (완료)
+                # analyze_operating_expense(yyyymm, brd_cd)  # 영업비 종합분석 (완료)
+                # analyze_monthly_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출 추세 분석 (완료)
+                # analyze_monthly_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출 추세 분석
+                # analyze_monthly_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고 추세 분석 (완료)
                 pass  # 주석 처리된 함수가 없을 경우를 위한 pass
             except Exception as e:
                 print(f"[ERROR] 브랜드 {brd_cd} 분석 중 오류 발생: {e}")
