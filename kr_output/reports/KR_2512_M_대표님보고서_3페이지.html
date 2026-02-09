@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLB 브랜드 2025년 12월 실적 보고서</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Noto Sans KR', 'Malgun Gothic', '맑은 고딕', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        .page {
+            background: linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%);
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto 20px;
+            padding: 25mm;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            page-break-after: always;
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .page::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 6px;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        }
+        
+        .page:last-child {
+            page-break-after: auto;
+        }
+        
+        .header {
+            border-bottom: 4px solid;
+            border-image: linear-gradient(90deg, #667eea, #764ba2) 1;
+            padding-bottom: 20px;
+            margin-bottom: 35px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            position: relative;
+        }
+        
+        .header-left h1 {
+            font-size: 32px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        
+        .header-left .subtitle {
+            font-size: 13px;
+            color: #6c757d;
+            font-weight: 400;
+            letter-spacing: 0.5px;
+        }
+        
+        .header-right {
+            text-align: right;
+            font-size: 11px;
+            color: #adb5bd;
+            font-weight: 300;
+        }
+        
+        .section {
+            margin-bottom: 35px;
+        }
+        
+        .section-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 20px;
+            padding-left: 15px;
+            position: relative;
+            letter-spacing: -0.3px;
+        }
+        
+        .section-title::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 5px;
+            height: 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 3px;
+        }
+        
+        .section-subtitle {
+            font-size: 17px;
+            font-weight: 600;
+            color: #4a5568;
+            margin: 25px 0 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .section-subtitle::before {
+            content: '▶';
+            color: #667eea;
+            font-size: 14px;
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 18px;
+            margin-bottom: 25px;
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .metric-card.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+        }
+        
+        .metric-card.primary .metric-label,
+        .metric-card.primary .metric-value {
+            color: white;
+        }
+        
+        .metric-label {
+            font-size: 11px;
+            color: #718096;
+            margin-bottom: 8px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .metric-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 5px;
+            letter-spacing: -0.5px;
+        }
+        
+        .metric-change {
+            font-size: 13px;
+            font-weight: 600;
+            margin-top: 8px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: inline-block;
+        }
+        
+        .metric-change.positive {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .metric-change.negative {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .risk-list, .signal-list {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .risk-list li {
+            background: linear-gradient(135deg, #fff5e6 0%, #ffe8cc 100%);
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            border-left: 4px solid #f59e0b;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(245, 158, 11, 0.1);
+            font-size: 13px;
+            color: #78350f;
+            font-weight: 500;
+            position: relative;
+            padding-left: 40px;
+        }
+        
+        .risk-list li::before {
+            content: '⚠';
+            position: absolute;
+            left: 14px;
+            font-size: 18px;
+        }
+        
+        .signal-list li {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            border-left: 4px solid #10b981;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.1);
+            font-size: 13px;
+            color: #065f46;
+            font-weight: 500;
+            position: relative;
+            padding-left: 40px;
+        }
+        
+        .signal-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 14px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-bottom: 25px;
+            font-size: 13px;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 12px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: none;
+        }
+        
+        .table th:first-child {
+            text-align: left;
+            padding-left: 18px;
+        }
+        
+        .table td {
+            padding: 12px;
+            text-align: right;
+            border-bottom: 1px solid #e2e8f0;
+            color: #4a5568;
+            font-weight: 500;
+        }
+        
+        .table td:first-child {
+            text-align: left;
+            padding-left: 18px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .table tr:hover {
+            background: #f7fafc;
+        }
+        
+        .table .positive {
+            color: #059669;
+            font-weight: 700;
+        }
+        
+        .table .negative {
+            color: #dc2626;
+            font-weight: 700;
+        }
+        
+        .action-item {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            padding: 20px;
+            margin-bottom: 18px;
+            border-left: 5px solid;
+            border-image: linear-gradient(135deg, #667eea, #764ba2) 1;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        
+        .action-title {
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #2d3748;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .action-title::before {
+            content: '⚡';
+            font-size: 20px;
+        }
+        
+        .action-list {
+            list-style: none;
+            padding-left: 0;
+            margin: 12px 0;
+        }
+        
+        .action-list li {
+            padding: 8px 0;
+            padding-left: 28px;
+            position: relative;
+            color: #4a5568;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .action-list li::before {
+            content: '▸';
+            position: absolute;
+            left: 8px;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        
+        .key-message {
+            background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+            padding: 25px;
+            border-left: 5px solid #667eea;
+            border-radius: 10px;
+            margin-top: 25px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+        }
+        
+        .key-message h3 {
+            color: #4338ca;
+            font-weight: 700;
+            margin-bottom: 12px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .key-message h3::before {
+            content: '💡';
+            font-size: 20px;
+        }
+        
+        .key-message p {
+            color: #3730a3;
+            font-size: 13px;
+            line-height: 1.8;
+            font-weight: 500;
+        }
+        
+        .kpi-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: separate;
+            border-spacing: 0;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .kpi-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .kpi-table td {
+            padding: 12px;
+            text-align: center;
+            border-bottom: 1px solid #e2e8f0;
+            color: #4a5568;
+            font-weight: 500;
+        }
+        
+        .kpi-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .kpi-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        
+        .page-footer {
+            position: absolute;
+            bottom: 20mm;
+            right: 25mm;
+            font-size: 10px;
+            color: #adb5bd;
+            font-weight: 300;
+        }
+        
+        .highlight-box {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            padding: 15px 18px;
+            border-radius: 10px;
+            border-left: 4px solid #f59e0b;
+            margin: 15px 0;
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
+        }
+        
+        .highlight-box p {
+            color: #78350f;
+            font-size: 12px;
+            font-weight: 600;
+            margin: 0;
+            line-height: 1.6;
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            .page {
+                margin: 0;
+                box-shadow: none;
+                border-radius: 0;
+            }
+            .page::before {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="page">
+        <div class="header">
+            <div class="header-left">
+                <h1>MLB 2025년 12월 실적 보고서</h1>
+                <div class="subtitle">경영관리팀 FP&A | 보고일: 2025년 12월</div>
+            </div>
+            <div class="header-right">
+                MLB 브랜드 2025년 12월 실적 보고서 | Page 1/3
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">📊 핵심 경영 지표</div>
+            <div class="metrics-grid">
+
+                <div class="metric-card primary">
+                    <div class="metric-label">Total Sales</div>
+                    <div class="metric-value">32,702백만원</div>
+                </div>
+
+                <div class="metric-card primary">
+                    <div class="metric-label">Sales Yoy</div>
+                    <div class="metric-value">10.8%</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Operating Profit</div>
+                    <div class="metric-value">306,060백만원</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Operating Profit Rate</div>
+                    <div class="metric-value">90.9%</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Operating Profit Rate Change</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Discount Rate</div>
+                    <div class="metric-value">0.0%</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Discount Rate Change</div>
+                    <div class="metric-value">0.0%p</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Direct Profit Rate</div>
+                    <div class="metric-value">90.9%</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Direct Profit Rate Change</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Cogs Rate</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Cogs Rate Change</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Sales Per Store</div>
+                    <div class="metric-value">188백만원</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Sales Per Store Yoy</div>
+                    <div class="metric-value">116.0%</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Sales Per Person</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-label">Sales Per Person Yoy</div>
+                    <div class="metric-value">N/A</div>
+                </div>
+
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">🔴 Critical Risk</div>
+            <ul class="risk-list">
+<li>리스크 1: 면세점 매출 3.3% 감소로 핵심 채널 성장 둔화, 점포당 매출은 1,342백만원으로 높지만 전체 트렌드 우려</li><li>리스크 2: 백화점 채널 2.6% 감소와 함께 점포당 매출 110백만원으로 전체 평균(188백만원) 대비 58% 수준의 저효율</li><li>리스크 3: 대리점 59개 점포의 점포당 매출 81백만원으로 가장 낮은 효율성, 네트워크 규모 대비 수익성 부족</li><li>리스크 4: 직영점 점포당 매출 98백만원으로 평균 이하 성과, 직접 통제 가능 채널임에도 개선 미흡</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">🟢 Positive Signal</div>
+            <ul class="signal-list">
+<li>긍정 신호 1: 플래그쉽 채널 폭발적 성장으로 점포당 매출 827백만원, 전년대비 160.1% 증가하며 새로운 성장 모델 확립</li><li>긍정 신호 2: 대리점 채널 전체 매출 11.9% 성장으로 네트워크 확장 효과 가시화, 지역별 맞춤 전략 성공</li><li>긍정 신호 3: RF 채널 점포당 매출 313백만원으로 123.5% 성장하며 안정적 고성장 채널로 부상</li><li>긍정 신호 4: 겨울 시즌 아이템 강세로 다운점퍼 전 채널 상위권 진입, 계절성 상품 전략 성공</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">💡 12월 Key Point</div>
+            <p>MLB는 전체 매출 10.8% 성장을 달성했으나 채널별 격차가 심화되고 있습니다. 플래그쉽(160% 성장)과 RF 채널의 성공 모델을 백화점, 직영점, 대리점에 적용하여 점포 효율성을 개선해야 합니다. 면세점과 백화점의 매출 감소는 우려되지만, 대리점 네트워크 확장 성과와 겨울 아이템 강세는 긍정적 신호입니다. 2026년 목표 달성을 위해서는 저효율 점포 정리와 우수 채널 모델 확산이 핵심 과제입니다.</p>
+        </div>
+    </div>
+
+    <div class="page">
+        <div class="header">
+            <div class="header-left">
+                <h1>MLB 브랜드 2025년 12월 실적 보고서</h1>
+                <div class="subtitle">경영관리팀 FP&A | 보고일: 2026년 02월 | 상세 분석</div>
+            </div>
+            <div class="header-right">
+                MLB 브랜드 2025년 12월 실적 보고서 | Page 2/3
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">2. 채널별 상세 분석</div>
+
+            <h3>🚀 고성장 채널</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>채널</th>
+                        <th>매출</th>
+                        <th>YoY</th>
+                        <th>직접이익률</th>
+                    </tr>
+                </thead>
+                <tbody>
+
+                    <tr>
+                        <td>플래그쉽</td>
+                        <td>827백만원</td>
+                        <td class="">160.1%</td>
+                        <td>추정 35-40%</td>
+                    </tr>
+
+                    <tr>
+                        <td>면세점</td>
+                        <td>1,342백만원</td>
+                        <td class="">108.8%</td>
+                        <td>추정 45-50%</td>
+                    </tr>
+
+                    <tr>
+                        <td>RF</td>
+                        <td>313백만원</td>
+                        <td class="">123.5%</td>
+                        <td>추정 30-35%</td>
+                    </tr>
+
+                </tbody>
+            </table>
+
+        </div>
+        
+        <div class="section">
+            <div class="section-title">3. 상품/재고 분석</div>
+<p>상품 및 재고 분석 내용...</p>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">4. 매장 효율성 분석</div>
+<p>매장 효율성 분석 내용...</p>
+        </div>
+    </div>
+
+    <div class="page">
+        <div class="header">
+            <div class="header-left">
+                <h1>MLB 브랜드 2025년 12월 실적 보고서</h1>
+                <div class="subtitle">경영관리팀 FP&A | 보고일: 2026년 02월 | 전략 & Action Plan</div>
+            </div>
+            <div class="header-right">
+                MLB 브랜드 2025년 12월 실적 보고서 | Page 3/3
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-title">5. 전략 & Action Plan</div>
+
+            <h3>⚡ 즉시 실행 (1개월 내)</h3>
+
+            <div class="action-item">
+                <div class="action-title">저효율 점포 긴급 개선</div>
+                <ul class="action-list">
+<li>백화점 63개 점포 중 하위 20개 점포 집중 관리 체계 구축</li><li>플래그쉽 성공 모델(점포당 827백만원) 운영 노하우 즉시 전파</li><li>대리점 59개 점포 중 점포당 매출 50백만원 미만 10개 점포 운영 중단 검토</li>
+                </ul>
+                <p><strong>목표:</strong> 4주 내 저효율 점포 20% 매출 개선</p>
+                <p><strong>효과:</strong> 전체 점포당 매출 200백만원 달성 기반 마련</p>
+            </div>
+
+        <div class="key-message">
+            <h3>📌 경영진 핵심 메시지</h3>
+            <p>MLB는 플래그쉽(160% 성장)과 면세점(점포당 1,342백만원) 성공 모델을 보유하고 있으나, 백화점 63개·대리점 59개 점포의 저효율이 전체 성장을 제약하고 있습니다. 즉시 저효율 점포 20% 정리와 우수 모델 확산을 통해 2026년 점포당 매출 220백만원 달성이 가능하며, 이는 전체 매출 17% 증가 효과를 가져올 것입니다.</p>
+        </div>
+
+        </div>
+    </div>
+</body>
+</html>

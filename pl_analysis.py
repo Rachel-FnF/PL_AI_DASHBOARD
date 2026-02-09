@@ -549,73 +549,63 @@ def get_category_profit_analysis_query(yyyymm, yyyymm_py, brd_cd):
 
 def get_store_profit_query(yyyymm, yyyymm_py, brd_cd):
     """매장별 직접이익 분석 쿼리 (당해/전년 동월 비교)"""
-    # 브랜드 코드를 리스트 형식으로 변환 (쿼리에서 IN 절 사용)
-    if isinstance(brd_cd, list):
-        brd_cd_list = "', '".join(brd_cd)
-        brd_cd_filter = f"'{brd_cd_list}'"
-    else:
-        brd_cd_filter = f"'{brd_cd}'"
-    
     return f"""
-with t1 as (
-    select a.PST_YYYYMM
-         , CASE
-               WHEN TO_NUMBER(LEFT(a.PST_YYYYMM, 4)) = YEAR(TO_DATE('{yyyymm}', 'YYYYMM')) THEN '당해'
-               WHEN TO_NUMBER(LEFT(a.PST_YYYYMM, 4)) = YEAR(DATEADD(YEAR, -1, TO_DATE('{yyyymm}', 'YYYYMM'))) THEN '전년'
-               ELSE '기타'
-    END AS PYCY
-         , a.BRD_CD
-         , a.BRD_NM
-         , a.CHNL_CD
-         , a.CHNL_NM
-         , sum(TAG_SALE_AMT) as TAG_SALE_AMT
-         , sum(ACT_SALE_AMT) as ACT_SALE_AMT
-         , sum(RVSL_BEF_COGS) as RVSL_BEF_COGS
-         , sum(VLTN_RVSL_AMT) as VLTN_RVSL_AMT
-         , sum(RVSL_AFT_COGS) as RVSL_AFT_COGS
-         , sum(DSTRB_CMS) as DSTRB_CMS
-         , SUM(ACT_SALE_AMT) / 1.1 - SUM(RVSL_AFT_COGS) + SUM(VLTN_AMT) - sum(DSTRB_CMS) as GROSS_PRFT
-         , sum(RYT) as RYT
-         , sum(SHOP_RNT) as SHOP_RNT
-         , case
-               when a.CHNL_CD = '1' then sum(SM_CMS)
-               when a.CHNL_CD = '2' then sum(DF_SALE_STFF_CMS)
-               when a.CHNL_CD in ('3', '11') then sum(DMGMT_SALE_STFF_CMS)
-               when a.CHNL_CD in ('7', '12') then sum(DMGMT_SALE_STFF_CMS)
-               when a.CHNL_CD in ('4', '5') then sum(ALNC_ONLN_CMS)
-               ELSE 0
-    end as CMS
-         , sum(SM_CMS) as SM_CMS
-         , sum(DF_SALE_STFF_CMS) as DF_SALE_STFF_CMS
-         , sum(DMGMT_SALE_STFF_CMS) as DMGMT_SALE_STFF_CMS
-         , sum(ALNC_ONLN_CMS) as ALNC_ONLN_CMS
-         , sum(SHOP_DEPRC_CST) as SHOP_DEPRC_CST
-         , sum(CARD_CMS) as CARD_CMS
-         , sum(LGT_CST) + sum(STRG_CST) as LGT_STRG_CST
-    from SAP_FNF.dm_prft_shop_m a
-    join SAP_FNF.dm_dcst_shop_m b
-        on a.PST_YYYYMM = b.PST_YYYYMM
-        and a.CORP_CD = b.CORP_CD
-        and a.BRD_CD = b.BRD_CD
-        and a.CHNL_CD = b.CHNL_CD
-        and a.SHOP_CD = b.SHOP_CD
-        and a.RF_YN = b.RF_YN
-    WHERE a.PST_YYYYMM BETWEEN '{yyyymm_py}' AND '{yyyymm}'
-      AND a.CHNL_CD NOT IN ('0', '8', '9', '99')
-      AND a.BRD_CD = '{brd_cd}'
-    GROUP BY a.PST_YYYYMM
-           , a.BRD_CD
-           , a.BRD_NM
-           , a.CHNL_CD
-           , a.CHNL_NM
-    order by PST_YYYYMM desc, brd_cd, chnl_cd
-)
-select BRD_CD || CHNL_NM || PST_YYYYMM AS MASTER,
-       pst_yyyymm,
-       right(PST_YYYYMM, 2) || '월' as month,
-       PYCY,
-       brd_cd,
-       chnl_nm,
+with t1 as (select a.PST_YYYYMM
+                 , a.BRD_CD
+                 , a.BRD_NM
+                 , a.CHNL_CD
+                 , a.CHNL_NM
+                 , a.SHOP_CD
+                 , a.SHOP_NM
+                 , sum(TAG_SALE_AMT)                                                                 as TAG_SALE_AMT 
+                 , sum(ACT_SALE_AMT)                                                                 as ACT_SALE_AMT
+                 , sum(RVSL_BEF_COGS)                                                                as RVSL_BEF_COGS
+                 , sum(VLTN_RVSL_AMT)                                                                as VLTN_RVSL_AMT
+                 , sum(RVSL_AFT_COGS)                                                                as RVSL_AFT_COGS
+                 , sum(DSTRB_CMS)                                                                    as DSTRB_CMS
+                 , SUM(ACT_SALE_AMT) / 1.1 - SUM(RVSL_AFT_COGS) + SUM(VLTN_AMT) - sum(DSTRB_CMS)     as GROSS_PRFT
+                 , sum(RYT)                                                                          as RYT
+                 , sum(SHOP_RNT)                                                                     as SHOP_RNT
+                 , case
+                       when a.CHNL_CD = '1' then sum(SM_CMS)
+                       when a.CHNL_CD = '2' then sum(DF_SALE_STFF_CMS)
+                       when a.CHNL_CD in ('3', '11') then sum(DMGMT_SALE_STFF_CMS)
+                       when a.CHNL_CD in ('7', '12') then sum(DMGMT_SALE_STFF_CMS)
+                       when a.CHNL_CD in ('4', '5') then sum(ALNC_ONLN_CMS)
+                       ELSE 0
+        end                                                                                          as CMS
+                 , sum(SM_CMS)                                                                       as SM_CMS
+                 , sum(DF_SALE_STFF_CMS)                                                             as DF_SALE_STFF_CMS
+                 , sum(DMGMT_SALE_STFF_CMS)                                                          as DMGMT_SALE_STFF_CMS
+                 , sum(ALNC_ONLN_CMS)                                                                as ALNC_ONLN_CMS
+                 , sum(SHOP_DEPRC_CST)                                                               as SHOP_DEPRC_CST
+                 , sum(CARD_CMS)                                                                     as CARD_CMS
+                 , sum(LGT_CST) + sum(STRG_CST)                                                      as LGT_STRG_CST
+            from SAP_FNF.dm_prft_shop_m a
+                     join SAP_FNF.dm_dcst_shop_m b
+                          on a.PST_YYYYMM = b.PST_YYYYMM
+                              and a.CORP_CD = b.CORP_CD
+                              and a.BRD_CD = b.BRD_CD
+                              and a.CHNL_CD = b.CHNL_CD
+                              and a.SHOP_CD = b.SHOP_CD
+                              and a.RF_YN = b.RF_YN
+            WHERE a.PST_YYYYMM BETWEEN '{yyyymm_py}' AND '{yyyymm}'
+              AND a.CHNL_CD NOT IN ('0', '8', '9', '99')
+              AND a.BRD_CD = '{brd_cd}'
+            GROUP BY a.PST_YYYYMM
+                   , a.BRD_CD
+                   , a.BRD_NM
+                   , a.CHNL_CD
+                   , a.CHNL_NM
+                   , a.SHOP_CD
+                   , a.SHOP_NM
+            order by PST_YYYYMM desc, ACT_SALE_AMT desc)
+select pst_yyyymm,
+       BRD_CD,
+       CHNL_CD,
+       CHNL_NM,
+       SHOP_CD,
+       SHOP_NM,
        tag_sale_amt,
        ACT_SALE_AMT,
        RVSL_BEF_COGS,
@@ -635,12 +625,12 @@ select BRD_CD || CHNL_NM || PST_YYYYMM AS MASTER,
        sum(LGT_STRG_CST) as DPRFT
 from t1
 where brd_cd = '{brd_cd}'
-group by master,
-         pst_yyyymm,
-         right(PST_YYYYMM, 2),
-         pycy,
+group by pst_yyyymm,
          brd_cd,
+         CHNL_CD,
          chnl_nm,
+         SHOP_CD,
+         SHOP_NM,
          tag_sale_amt,
          ACT_SALE_AMT,
          RVSL_BEF_COGS,
@@ -654,7 +644,7 @@ group by master,
          SHOP_DEPRC_CST,
          CARD_CMS,
          LGT_STRG_CST
-order by pst_yyyymm desc, brd_cd, chnl_nm
+order by pst_yyyymm desc, DPRFT desc
 """
 
 def get_category_profit_overall_query(yyyymm_start, yyyymm_end, brd_cd):
@@ -2007,25 +1997,28 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
             print("데이터가 없습니다.")
             return None
         
-        # 성별 매핑 (남성, 여성, 공용으로 정규화)
+        # 성별 매핑 (남성, 여성, 공용, 아동으로 정규화)
+        # 브랜드 X와 ST는 아동도 포함
         def normalize_gender(sex_nm):
-            """성별을 남성/여성/공용으로 정규화"""
+            """성별을 남성/여성/공용/아동으로 정규화"""
             if not sex_nm:
                 return '공용'
             sex_nm = str(sex_nm).strip()
-            if '남성' in sex_nm or '남' in sex_nm or 'M' in sex_nm.upper():
+            if '아동' in sex_nm or 'KIDS' in sex_nm.upper() or 'KID' in sex_nm.upper() or '어린이' in sex_nm:
+                return '아동'
+            elif '남성' in sex_nm or '남' in sex_nm or 'M' in sex_nm.upper():
                 return '남성'
             elif '여성' in sex_nm or '여' in sex_nm or 'F' in sex_nm.upper():
                 return '여성'
             else:
                 return '공용'
         
-        # 성별별 데이터 분류
-        gender_data = {
-            '남성': {'cypy': [], 'trend': []},
-            '여성': {'cypy': [], 'trend': []},
-            '공용': {'cypy': [], 'trend': []}
-        }
+        # 성별별 데이터 분류 (브랜드 X, ST는 아동 포함)
+        gender_list = ['공용', '남성', '여성']
+        if brd_cd in ['X', 'ST']:
+            gender_list.append('아동')
+        
+        gender_data = {gender: {'cypy': [], 'trend': []} for gender in gender_list}
         
         for record in records_cypy:
             normalized_gender = normalize_gender(record.get('SEX_NM', ''))
@@ -2038,8 +2031,8 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
         # 성별별 분석 결과 저장
         gender_analyses = {}
         
-        # 각 성별별로 분석 수행
-        for gender in ['공용', '남성', '여성']:
+        # 각 성별별로 분석 수행 (브랜드 X, ST는 아동 포함)
+        for gender in gender_list:
             if not gender_data[gender]['cypy'] and not gender_data[gender]['trend']:
                 print(f"[SKIP] {gender} 제품 데이터가 없습니다.")
                 continue
@@ -2157,7 +2150,7 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
         
         # 성별별 매출 비중 계산
         gender_sales_share = {}
-        for gender in ['공용', '남성', '여성']:
+        for gender in gender_list:
             gender_cypy_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in gender_data[gender]['cypy'])
             gender_trend_total = sum(float(r.get('ACT_SALE_AMT', 0)) for r in gender_data[gender]['trend'])
             gender_sales_share[gender] = {
@@ -2169,7 +2162,7 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
         
         # 종합 인사이트 프롬프트 생성
         comprehensive_prompt = f"""
-너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 전략 분석 전문가야. 남성, 여성, 공용 제품의 통합 분석을 바탕으로 종합 인사이트를 제시해줘.
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 전략 분석 전문가야. {', '.join(gender_list)} 제품의 통합 분석을 바탕으로 종합 인사이트를 제시해줘.
 
 **분석 기간**
 - 당해/전년 비교: {previous_year}년 {current_month}월 vs {current_year}년 {current_month}월
@@ -2186,7 +2179,7 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
 {json_dumps_safe({k: v.get('sections', [{}])[0].get('ai_text', '')[:500] if v.get('sections') else '' for k, v in gender_analyses.items()}, ensure_ascii=False, indent=2)}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 남성, 여성, 공용 제품을 통합 분석하여:
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 {', '.join(gender_list)} 제품을 통합 분석하여:
 1. 전체 제품 포트폴리오의 성과와 성장 패턴 종합 평가
 2. 성별별 제품의 상호 관계와 시너지 효과 분석
 3. 브랜드 전체 전략 방향과 우선순위 제시
@@ -2234,8 +2227,8 @@ def analyze_gender_product_comprehensive(yyyymm, brd_cd):
         # 최종 JSON 데이터 구성
         final_sections = []
         
-        # 성별별 섹션 추가 (공용, 남성, 여성 순서)
-        for gender in ['공용', '남성', '여성']:
+        # 성별별 섹션 추가 (공용, 남성, 여성, 아동 순서)
+        for gender in gender_list:
             if gender in gender_analyses:
                 sections = gender_analyses[gender].get('sections', [])
                 if sections:
@@ -3470,148 +3463,352 @@ def analyze_store_profit(yyyymm, brd_cd):
             print("데이터가 없습니다.")
             return None
         
-        # 데이터 요약
-        total_sales = sum(float(r.get('ACT_SALE_AMT', 0)) for r in records)
-        total_gross_profit = sum(float(r.get('GROSS_PRFT', 0)) for r in records)
-        total_direct_cost = sum(float(r.get('DCST', 0)) for r in records)
-        total_direct_profit = sum(float(r.get('DPRFT', 0)) for r in records)
-        unique_channels = len(set(r.get('CHNL_NM', '') for r in records))
-        unique_months = len(set(r.get('PST_YYYYMM', '') for r in records))
+        # 당해/전년 데이터 분리
+        current_records = [r for r in records if r.get('PST_YYYYMM') == yyyymm]
+        previous_records = [r for r in records if r.get('PST_YYYYMM') == yyyymm_py]
+        
+        # 당해 데이터로 매장별 직접이익 계산 및 정렬
+        store_profit_current = {}
+        for record in current_records:
+            shop_key = f"{record.get('CHNL_NM', '')}_{record.get('SHOP_CD', '')}_{record.get('SHOP_NM', '')}"
+            if shop_key not in store_profit_current:
+                store_profit_current[shop_key] = {
+                    'CHNL_NM': record.get('CHNL_NM', ''),
+                    'SHOP_CD': record.get('SHOP_CD', ''),
+                    'SHOP_NM': record.get('SHOP_NM', ''),
+                    'ACT_SALE_AMT': 0,
+                    'GROSS_PRFT': 0,
+                    'DCST': 0,
+                    'DPRFT': 0,
+                    'RYT': 0,
+                    'SHOP_RNT': 0,
+                    'CMS': 0,
+                    'SHOP_DEPRC_CST': 0,
+                    'CARD_CMS': 0,
+                    'LGT_STRG_CST': 0
+                }
+            store_profit_current[shop_key]['ACT_SALE_AMT'] += float(record.get('ACT_SALE_AMT', 0))
+            store_profit_current[shop_key]['GROSS_PRFT'] += float(record.get('GROSS_PRFT', 0))
+            store_profit_current[shop_key]['DCST'] += float(record.get('DCST', 0))
+            store_profit_current[shop_key]['DPRFT'] += float(record.get('DPRFT', 0))
+            store_profit_current[shop_key]['RYT'] += float(record.get('RYT', 0))
+            store_profit_current[shop_key]['SHOP_RNT'] += float(record.get('SHOP_RNT', 0))
+            store_profit_current[shop_key]['CMS'] += float(record.get('CMS', 0))
+            store_profit_current[shop_key]['SHOP_DEPRC_CST'] += float(record.get('SHOP_DEPRC_CST', 0))
+            store_profit_current[shop_key]['CARD_CMS'] += float(record.get('CARD_CMS', 0))
+            store_profit_current[shop_key]['LGT_STRG_CST'] += float(record.get('LGT_STRG_CST', 0))
+        
+        # 전년 데이터로 매장별 직접이익 계산
+        store_profit_previous = {}
+        for record in previous_records:
+            shop_key = f"{record.get('CHNL_NM', '')}_{record.get('SHOP_CD', '')}_{record.get('SHOP_NM', '')}"
+            if shop_key not in store_profit_previous:
+                store_profit_previous[shop_key] = {
+                    'DPRFT': 0,
+                    'ACT_SALE_AMT': 0,
+                    'DCST': 0
+                }
+            store_profit_previous[shop_key]['DPRFT'] += float(record.get('DPRFT', 0))
+            store_profit_previous[shop_key]['ACT_SALE_AMT'] += float(record.get('ACT_SALE_AMT', 0))
+            store_profit_previous[shop_key]['DCST'] += float(record.get('DCST', 0))
+        
+        # 매장별 직접이익률 계산
+        for shop_key, shop_data in store_profit_current.items():
+            sale_amt = shop_data['ACT_SALE_AMT']
+            direct_profit = shop_data['DPRFT']
+            shop_data['DPRFT_RATE'] = round((direct_profit / (sale_amt / 1.1) * 100) if sale_amt > 0 else 0, 2)
+            
+            # 전년 대비 비교
+            if shop_key in store_profit_previous:
+                prev_profit = store_profit_previous[shop_key]['DPRFT']
+                prev_sale = store_profit_previous[shop_key]['ACT_SALE_AMT']
+                shop_data['DPRFT_YOY'] = direct_profit - prev_profit
+                shop_data['DPRFT_YOY_PCT'] = round(((direct_profit - prev_profit) / prev_profit * 100) if prev_profit != 0 else 0, 1)
+                shop_data['SALE_YOY'] = sale_amt - prev_sale
+                shop_data['SALE_YOY_PCT'] = round(((sale_amt - prev_sale) / prev_sale * 100) if prev_sale > 0 else 0, 1)
+                shop_data['DCST_YOY'] = shop_data['DCST'] - store_profit_previous[shop_key]['DCST']
+                shop_data['DCST_YOY_PCT'] = round(((shop_data['DCST'] - store_profit_previous[shop_key]['DCST']) / store_profit_previous[shop_key]['DCST'] * 100) if store_profit_previous[shop_key]['DCST'] != 0 else 0, 1)
+            else:
+                shop_data['DPRFT_YOY'] = None
+                shop_data['DPRFT_YOY_PCT'] = None
+                shop_data['SALE_YOY'] = None
+                shop_data['SALE_YOY_PCT'] = None
+                shop_data['DCST_YOY'] = None
+                shop_data['DCST_YOY_PCT'] = None
+        
+        # 직접이익 높은 매장 TOP 10 (당해)
+        top_stores = sorted(
+            [s for s in store_profit_current.values() if s['DPRFT'] > 0],
+            key=lambda x: x['DPRFT'],
+            reverse=True
+        )[:10]
+        
+        # 직접이익 낮은 매장 (마이너스 또는 매우 낮은 매장)
+        low_stores = sorted(
+            [s for s in store_profit_current.values() if s['DPRFT'] <= 0 or s['DPRFT_RATE'] < 5],
+            key=lambda x: x['DPRFT']
+        )[:10]
+        
+        # 전년 대비 직접이익 증가율이 높은 매장 TOP 10
+        improving_stores = sorted(
+            [s for s in store_profit_current.values() if s.get('DPRFT_YOY_PCT') is not None and s.get('DPRFT_YOY_PCT', 0) > 0],
+            key=lambda x: x.get('DPRFT_YOY_PCT', 0),
+            reverse=True
+        )[:10]
+        
+        # 전년 대비 직접이익 감소율이 큰 매장 TOP 10
+        declining_stores = sorted(
+            [s for s in store_profit_current.values() if s.get('DPRFT_YOY_PCT') is not None and s.get('DPRFT_YOY_PCT', 0) < 0],
+            key=lambda x: x.get('DPRFT_YOY_PCT', 0)
+        )[:10]
+        
+        # 채널별 요약
+        channel_summary = {}
+        for shop_data in store_profit_current.values():
+            chnl_nm = shop_data['CHNL_NM']
+            if chnl_nm not in channel_summary:
+                channel_summary[chnl_nm] = {
+                    'store_count': 0,
+                    'total_sales': 0,
+                    'total_direct_profit': 0,
+                    'total_direct_cost': 0,
+                    'avg_direct_profit_rate': 0
+                }
+            channel_summary[chnl_nm]['store_count'] += 1
+            channel_summary[chnl_nm]['total_sales'] += shop_data['ACT_SALE_AMT']
+            channel_summary[chnl_nm]['total_direct_profit'] += shop_data['DPRFT']
+            channel_summary[chnl_nm]['total_direct_cost'] += shop_data['DCST']
+        
+        # 채널별 평균 직접이익률 계산
+        for chnl_nm, chnl_data in channel_summary.items():
+            if chnl_data['total_sales'] > 0:
+                chnl_data['avg_direct_profit_rate'] = round(
+                    (chnl_data['total_direct_profit'] / (chnl_data['total_sales'] / 1.1) * 100),
+                    2
+                )
+            chnl_data['total_sales'] = round(chnl_data['total_sales'] / 1000000, 2)
+            chnl_data['total_direct_profit'] = round(chnl_data['total_direct_profit'] / 1000000, 2)
+            chnl_data['total_direct_cost'] = round(chnl_data['total_direct_cost'] / 1000000, 2)
+        
+        # 전체 요약
+        total_sales = sum(s['ACT_SALE_AMT'] for s in store_profit_current.values())
+        total_gross_profit = sum(s['GROSS_PRFT'] for s in store_profit_current.values())
+        total_direct_cost = sum(s['DCST'] for s in store_profit_current.values())
+        total_direct_profit = sum(s['DPRFT'] for s in store_profit_current.values())
+        unique_channels = len(set(s['CHNL_NM'] for s in store_profit_current.values()))
+        unique_stores = len(store_profit_current)
         
         print(f"총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)")
         print(f"총 매출총이익: {total_gross_profit:,.0f}원 ({total_gross_profit/1000000:.2f}백만원)")
         print(f"총 직접비용: {total_direct_cost:,.0f}원 ({total_direct_cost/1000000:.2f}백만원)")
         print(f"총 직접이익: {total_direct_profit:,.0f}원 ({total_direct_profit/1000000:.2f}백만원)")
+        print(f"평균 직접이익률: {round((total_direct_profit / (total_sales / 1.1) * 100) if total_sales > 0 else 0, 2)}%")
         print(f"채널 수: {unique_channels}개")
-        print(f"분석 월 수: {unique_months}개월")
+        print(f"매장 수: {unique_stores}개")
+        print(f"직접이익 높은 매장 TOP 10: {len(top_stores)}개")
+        print(f"직접이익 낮은 매장: {len(low_stores)}개")
         
-        # 채널별 요약 데이터 생성 (당해/전년 비교)
-        channel_comparison = {}
-        for record in records:
-            chnl_nm = record.get('CHNL_NM', '기타')
-            pycy = record.get('PYCY', '')
-            sale_amt = float(record.get('ACT_SALE_AMT', 0))
-            gross_profit = float(record.get('GROSS_PRFT', 0))
-            direct_cost = float(record.get('DCST', 0))
-            direct_profit = float(record.get('DPRFT', 0))
-            
-            if chnl_nm not in channel_comparison:
-                channel_comparison[chnl_nm] = {
-                    'current_total': 0,
-                    'previous_total': 0,
-                    'current_profit': 0,
-                    'previous_profit': 0,
-                    'current_direct_profit': 0,
-                    'previous_direct_profit': 0,
-                    'current_direct_cost': 0,
-                    'previous_direct_cost': 0
-                }
-            
-            if pycy == '당해':
-                channel_comparison[chnl_nm]['current_total'] += sale_amt
-                channel_comparison[chnl_nm]['current_profit'] += gross_profit
-                channel_comparison[chnl_nm]['current_direct_profit'] += direct_profit
-                channel_comparison[chnl_nm]['current_direct_cost'] += direct_cost
-            elif pycy == '전년':
-                channel_comparison[chnl_nm]['previous_total'] += sale_amt
-                channel_comparison[chnl_nm]['previous_profit'] += gross_profit
-                channel_comparison[chnl_nm]['previous_direct_profit'] += direct_profit
-                channel_comparison[chnl_nm]['previous_direct_cost'] += direct_cost
+        # 매장 데이터를 백만원 단위로 변환 (프롬프트용)
+        top_stores_formatted = []
+        for store in top_stores:
+            top_stores_formatted.append({
+                'CHNL_NM': store['CHNL_NM'],
+                'SHOP_NM': store['SHOP_NM'],
+                'ACT_SALE_AMT': round(store['ACT_SALE_AMT'] / 1000000, 2),
+                'GROSS_PRFT': round(store['GROSS_PRFT'] / 1000000, 2),
+                'DCST': round(store['DCST'] / 1000000, 2),
+                'DPRFT': round(store['DPRFT'] / 1000000, 2),
+                'DPRFT_RATE': store['DPRFT_RATE'],
+                'RYT': round(store['RYT'] / 1000000, 2),
+                'SHOP_RNT': round(store['SHOP_RNT'] / 1000000, 2),
+                'CMS': round(store['CMS'] / 1000000, 2),
+                'SHOP_DEPRC_CST': round(store['SHOP_DEPRC_CST'] / 1000000, 2),
+                'CARD_CMS': round(store['CARD_CMS'] / 1000000, 2),
+                'LGT_STRG_CST': round(store['LGT_STRG_CST'] / 1000000, 2),
+                'DPRFT_YOY': round(store.get('DPRFT_YOY', 0) / 1000000, 2) if store.get('DPRFT_YOY') is not None else None,
+                'DPRFT_YOY_PCT': store.get('DPRFT_YOY_PCT'),
+                'SALE_YOY_PCT': store.get('SALE_YOY_PCT')
+            })
         
-        # 당해/전년 데이터가 모두 있는 채널만 필터링
-        valid_channels = [
-            chnl for chnl, data in channel_comparison.items()
-            if data['current_total'] > 0 and data['previous_total'] > 0
-        ]
+        low_stores_formatted = []
+        for store in low_stores:
+            low_stores_formatted.append({
+                'CHNL_NM': store['CHNL_NM'],
+                'SHOP_NM': store['SHOP_NM'],
+                'ACT_SALE_AMT': round(store['ACT_SALE_AMT'] / 1000000, 2),
+                'GROSS_PRFT': round(store['GROSS_PRFT'] / 1000000, 2),
+                'DCST': round(store['DCST'] / 1000000, 2),
+                'DPRFT': round(store['DPRFT'] / 1000000, 2),
+                'DPRFT_RATE': store['DPRFT_RATE'],
+                'RYT': round(store['RYT'] / 1000000, 2),
+                'SHOP_RNT': round(store['SHOP_RNT'] / 1000000, 2),
+                'CMS': round(store['CMS'] / 1000000, 2),
+                'SHOP_DEPRC_CST': round(store['SHOP_DEPRC_CST'] / 1000000, 2),
+                'CARD_CMS': round(store['CARD_CMS'] / 1000000, 2),
+                'LGT_STRG_CST': round(store['LGT_STRG_CST'] / 1000000, 2),
+                'DPRFT_YOY': round(store.get('DPRFT_YOY', 0) / 1000000, 2) if store.get('DPRFT_YOY') is not None else None,
+                'DPRFT_YOY_PCT': store.get('DPRFT_YOY_PCT'),
+                'SALE_YOY_PCT': store.get('SALE_YOY_PCT')
+            })
         
-        # 채널별 수익률 계산
-        for chnl_nm in valid_channels:
-            data = channel_comparison[chnl_nm]
-            data['current_profit_rate'] = round((data['current_profit'] / data['current_total'] * 100) if data['current_total'] > 0 else 0, 1)
-            data['previous_profit_rate'] = round((data['previous_profit'] / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
-            data['current_direct_profit_rate'] = round((data['current_direct_profit'] / data['current_total'] * 100) if data['current_total'] > 0 else 0, 1)
-            data['previous_direct_profit_rate'] = round((data['previous_direct_profit'] / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
-            data['sales_change'] = round(data['current_total'] - data['previous_total'], 0)
-            data['sales_change_pct'] = round(((data['current_total'] - data['previous_total']) / data['previous_total'] * 100) if data['previous_total'] > 0 else 0, 1)
-            data['direct_profit_change'] = round(data['current_direct_profit'] - data['previous_direct_profit'], 0)
-            data['direct_profit_change_pct'] = round(((data['current_direct_profit'] - data['previous_direct_profit']) / data['previous_direct_profit'] * 100) if data['previous_direct_profit'] != 0 else 0, 1)
-            # 백만원 단위로 변환
-            data['current_total'] = round(data['current_total'] / 1000000, 2)
-            data['previous_total'] = round(data['previous_total'] / 1000000, 2)
-            data['current_profit'] = round(data['current_profit'] / 1000000, 2)
-            data['previous_profit'] = round(data['previous_profit'] / 1000000, 2)
-            data['current_direct_profit'] = round(data['current_direct_profit'] / 1000000, 2)
-            data['previous_direct_profit'] = round(data['previous_direct_profit'] / 1000000, 2)
-            data['current_direct_cost'] = round(data['current_direct_cost'] / 1000000, 2)
-            data['previous_direct_cost'] = round(data['previous_direct_cost'] / 1000000, 2)
-            data['sales_change'] = round(data['sales_change'] / 1000000, 2)
-            data['direct_profit_change'] = round(data['direct_profit_change'] / 1000000, 2)
+        improving_stores_formatted = []
+        for store in improving_stores:
+            improving_stores_formatted.append({
+                'CHNL_NM': store['CHNL_NM'],
+                'SHOP_NM': store['SHOP_NM'],
+                'DPRFT': round(store['DPRFT'] / 1000000, 2),
+                'DPRFT_RATE': store['DPRFT_RATE'],
+                'DPRFT_YOY_PCT': store.get('DPRFT_YOY_PCT'),
+                'SALE_YOY_PCT': store.get('SALE_YOY_PCT'),
+                'DCST_YOY_PCT': store.get('DCST_YOY_PCT')
+            })
         
-        if not valid_channels:
-            print("당해/전년 데이터가 모두 있는 채널이 없습니다.")
-            return None
-        
-        # 채널별 섹션 템플릿 생성
-        channel_sections_template = ',\n    '.join([
-            '{{\n      "div": "{channel}",\n      "sub_title": "{channel} 매장별 직접이익 분석",\n      "ai_text": "각 {channel} 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘. (예: • {channel}의 직접이익은 1,234백만원으로 전년(1,100백만원) 대비 +12.2% 증가했습니다. 직접이익률은 15.2%로 전년(14.5%) 대비 +0.7%p 개선되었습니다. 매출 증가와 직접비용 효율화가 주요 원인입니다.)"\n    }}'.format(channel=channel)
-            for channel in valid_channels
-        ])
+        declining_stores_formatted = []
+        for store in declining_stores:
+            declining_stores_formatted.append({
+                'CHNL_NM': store['CHNL_NM'],
+                'SHOP_NM': store['SHOP_NM'],
+                'DPRFT': round(store['DPRFT'] / 1000000, 2),
+                'DPRFT_RATE': store['DPRFT_RATE'],
+                'DPRFT_YOY_PCT': store.get('DPRFT_YOY_PCT'),
+                'SALE_YOY_PCT': store.get('SALE_YOY_PCT'),
+                'DCST_YOY_PCT': store.get('DCST_YOY_PCT')
+            })
         
         # LLM 프롬프트 생성 (JSON 형식 응답 요청)
         prompt = f"""
-너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 매장 수익성 전문가야. 각 채널별 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘.
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 매장 수익성 전문가야. 매장별 직접이익 데이터를 분석하여 직접이익이 높은 매장의 성공 요인과 낮은 매장의 문제점을 도출하고, 구체적인 개선 방안을 제시해줘.
 
 **분석 기간**
 - 당해: {current_year}년 {current_month}월 ({yyyymm})
 - 전년: {previous_year}년 {current_month}월 ({yyyymm_py})
 
 **전체 요약**
-- 총 매출액: {total_sales:,.0f}원 ({total_sales/1000000:.2f}백만원)
-- 총 매출총이익: {total_gross_profit:,.0f}원 ({total_gross_profit/1000000:.2f}백만원)
-- 총 직접비용: {total_direct_cost:,.0f}원 ({total_direct_cost/1000000:.2f}백만원)
-- 총 직접이익: {total_direct_profit:,.0f}원 ({total_direct_profit/1000000:.2f}백만원)
-- 직접이익률: {round((total_direct_profit / total_sales * 100) if total_sales > 0 else 0, 1)}%
-- 분석 가능한 채널 수: {len(valid_channels)}개
-- 분석 채널 목록: {', '.join(valid_channels)}
+- 총 매출액: {round(total_sales/1000000, 2):,.0f}백만원
+- 총 직접이익: {round(total_direct_profit/1000000, 2):,.0f}백만원
+- 평균 직접이익률: {round((total_direct_profit / (total_sales / 1.1) * 100) if total_sales > 0 else 0, 2)}%
+- 분석 매장 수: {unique_stores}개
+- 채널 수: {unique_channels}개
 
-**채널별 데이터 요약**
-{json_dumps_safe(channel_comparison, ensure_ascii=False, indent=2)}
+**채널별 요약**
+{json_dumps_safe(channel_summary, ensure_ascii=False, indent=2)}
+
+**직접이익 높은 매장 TOP 10 (당해)**
+{json_dumps_safe(top_stores_formatted, ensure_ascii=False, indent=2)}
+
+**직접이익 낮은 매장 (마이너스 또는 5% 미만)**
+{json_dumps_safe(low_stores_formatted, ensure_ascii=False, indent=2)}
+
+**전년 대비 직접이익 증가율 높은 매장 TOP 10**
+{json_dumps_safe(improving_stores_formatted, ensure_ascii=False, indent=2)}
+
+**전년 대비 직접이익 감소율 큰 매장 TOP 10**
+{json_dumps_safe(declining_stores_formatted, ensure_ascii=False, indent=2)}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 각 채널별 당해 당월 매장별 직접이익을 전년대비 주요변화로 분석해줘:
-1. 채널별 직접이익과 직접이익률 분석: 각 채널의 직접이익, 직접이익률, 직접비용 구조 분석
-2. 전년대비 주요 변화 분석: 직접이익 변화, 직접이익률 변화, 직접비용 변화, 매출 변화 분석
-3. 채널별 수익성 개선 방안 제시: 직접이익률 개선을 위한 구체적인 방안 제시
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 매장별 직접이익을 심층 분석하여 다음 인사이트를 도출해줘:
 
-**중요**: 위 "채널별 데이터 요약"에 있는 채널만 분석하면 됩니다. 데이터가 없는 채널은 분석하지 마세요.
+1. **직접이익이 높은 매장의 성공 요인 분석**
+   - 직접이익 TOP 10 매장의 공통 특성과 성공 요인
+   - 높은 직접이익률을 달성한 매장의 비용 구조 분석 (매출, 원가, 직접비용 구성)
+   - 채널별 특성을 고려한 성공 요인 (면세점, 백화점, 대리점 등 채널 특성 반영)
+   - 직접비용 구성 요소별 효율성 (임대료, 인건비, 수수료, 감가상각비 등)
 
-<데이터 샘플>
-{json_dumps_safe(records[:200], ensure_ascii=False, indent=2)}
+2. **직접이익이 낮은 매장의 문제점 분석**
+   - 직접이익이 마이너스이거나 매우 낮은 매장의 공통 문제점
+   - 낮은 직접이익의 주요 원인 (매출 부족, 직접비용 과다, 원가율 높음 등)
+   - 직접비용 구성 요소별 문제점 식별
+   - 채널별 특성을 고려한 문제점 분석
+
+3. **전년 대비 변화 분석**
+   - 직접이익이 크게 개선된 매장의 개선 요인
+   - 직접이익이 크게 악화된 매장의 악화 원인
+   - 변화 패턴과 트렌드 분석
+
+4. **채널별 매장 효율성 비교**
+   - 채널별 평균 직접이익률과 매장 간 편차 분석
+   - 채널 내 우수 매장과 부진 매장의 차이점
+   - 채널 특성에 따른 직접이익 구조 차이
+
+5. **구체적인 개선 방안 제시**
+   - 직접이익이 낮은 매장의 개선 방안 (매출 증대, 비용 절감, 효율화 등)
+   - 우수 매장의 성공 사례를 다른 매장에 적용할 수 있는 방안
+   - 채널별 맞춤형 개선 전략
 
 <요구사항>
 {get_common_json_requirement()}
 
-각 채널별로 하나의 섹션을 만들어야 합니다. 채널 목록: {', '.join(valid_channels)}
+다음 JSON 구조로 분석 결과를 반환해줘:
 
 {{
-  "title": "매장별 직접이익 분석 (당해 전년 주요변화)",
+  "title": "AI 종합인사이트",
   "sections": [
-    {channel_sections_template}
+    {{
+      "div": "종합분석-1",
+      "sub_title": "직접이익이 높은 매장의 성공 요인 분석",
+      "ai_text": "직접이익 TOP 10 매장의 공통 특성, 성공 요인, 비용 구조 효율성, 채널별 특성을 고려한 종합 분석을 작성해줘."
+    }},
+    {{
+      "div": "종합분석-2",
+      "sub_title": "직접이익이 낮은 매장의 문제점 및 전년 대비 변화 분석",
+      "ai_text": "직접이익이 마이너스이거나 매우 낮은 매장의 공통 문제점, 주요 원인, 직접비용 구성 요소별 문제점, 전년 대비 악화된 매장의 악화 원인을 종합적으로 분석해줘."
+    }},
+    {{
+      "div": "종합분석-3",
+      "sub_title": "채널별 효율성 비교 및 개선 방안",
+      "ai_text": "채널별 평균 직접이익률과 매장 간 편차, 채널 내 우수/부진 매장 차이점, 채널 특성에 따른 직접이익 구조 차이를 분석하고, 직접이익이 낮은 매장의 구체적인 개선 방안, 우수 매장 성공 사례 적용 방안, 채널별 맞춤형 개선 전략을 제시해줘."
+    }}
   ]
 }}
 
 <작성 가이드라인>
 {get_common_prompt_guidelines()}
-- **각 채널별 섹션 작성 시 반드시 포함해야 할 내용:**
-  1. 당해 채널별 직접이익과 직접이익률 분석: 해당 채널의 직접이익, 직접이익률, 직접비용 구조 분석
-  2. 전년대비 주요 변화 분석: 직접이익 변화, 직접이익률 변화, 직접비용 변화, 매출 변화, 변화율 분석
-  3. 변화 원인 분석: 직접이익 변화의 원인 (매출 증가, 직접비용 효율화, 비용 구조 개선 등)
-  4. 단기 전략 방향: 해당 채널의 직접이익률 개선을 위한 다음 분기/시즌 전략 제시
-  5. 중장기 전략 방향: 해당 채널의 직접이익률 개선을 위한 향후 6개월~1년 전략 제시
-- 채널별 데이터 요약의 current_direct_profit, previous_direct_profit, current_direct_profit_rate, previous_direct_profit_rate, sales_change, direct_profit_change를 반드시 참고하여 분석
-- 각 채널별로 구체적인 수치(직접이익, 직접이익률, 변화율)를 포함하여 작성
-- 전년대비 변화는 구체적인 변화율과 변화액을 포함하여 분석
-- 전략 방향은 실행 가능하고 구체적인 내용으로 작성
+
+**각 섹션별 상세 작성 가이드:**
+
+1. **종합분석-1: 직접이익이 높은 매장의 성공 요인 분석**
+   - TOP 10 매장의 직접이익, 직접이익률, 매출액을 구체적으로 언급 (매장명 포함)
+   - 공통 특성 분석 (채널, 위치, 매출 규모, 비용 구조 등)
+   - 성공 요인 분석:
+     * 매출 증대 요인 (고객 유입, 상품 구성, 가격 전략 등)
+     * 직접비용 효율화 요인 (임대료 효율, 인건비 효율, 수수료 최적화 등)
+     * 원가율 관리 (매출원가율, 할인율 등)
+   - 직접비용 구성 요소별 효율성 분석 (RYT 임대료, SHOP_RNT 매장임대료, CMS 수수료, SHOP_DEPRC_CST 감가상각비, CARD_CMS 카드수수료, LGT_STRG_CST 물류비용)
+   - 채널별 특성을 고려한 성공 요인 (예: 면세점은 관광객 유입, 백화점은 VIP 고객, 대리점은 지역 특성 등)
+   - 전년 대비 개선된 매장의 개선 요인도 포함하여 분석
+
+2. **종합분석-2: 직접이익이 낮은 매장의 문제점 및 전년 대비 변화 분석**
+   - 낮은 매장들의 직접이익, 직접이익률, 매출액을 구체적으로 언급 (매장명 포함)
+   - 공통 문제점 분석:
+     * 매출 부족 원인 (위치, 경쟁, 상품 구성 등)
+     * 직접비용 과다 원인 (임대료 과다, 인건비 비효율, 수수료 부담 등)
+     * 원가율 문제 (매출원가율 높음, 할인율 과다 등)
+   - 직접비용 구성 요소별 문제점 식별 및 정량적 분석
+   - 채널별 특성을 고려한 문제점 분석
+   - 전년 대비 악화된 매장의 악화 원인 분석:
+     * 직접이익 감소율, 매출 변화율, 직접비용 변화율을 구체적으로 언급
+     * 악화 원인 (매출 감소, 직접비용 증가, 비용 구조 악화 등)
+     * 즉시 개선이 필요한 매장 식별
+
+3. **종합분석-3: 채널별 효율성 비교 및 개선 방안**
+   - 채널별 평균 직접이익률과 매장 간 편차 분석
+   - 채널 내 우수 매장과 부진 매장의 차이점 분석
+   - 채널 특성에 따른 직접이익 구조 차이 분석 (예: 면세점은 임대료 높지만 매출 높음, 대리점은 임대료 낮지만 매출 낮음 등)
+   - 직접이익이 낮은 매장의 구체적인 개선 방안:
+     * 매출 증대 방안 (위치 개선, 상품 구성, 마케팅 등)
+     * 직접비용 절감 방안 (임대료 재협상, 인건비 효율화, 수수료 최적화 등)
+     * 비용 구조 개선 방안
+   - 우수 매장의 성공 사례를 다른 매장에 적용할 수 있는 방안
+   - 채널별 맞춤형 개선 전략 제시
+
+**중요 지침:**
+- 모든 수치는 백만원 단위 정수로 표기 (소수점 없음)
+- 직접이익률 계산: 직접이익 / (매출액/1.1) * 100
+- 구체적인 매장명과 수치를 포함하여 작성
+- 직접비용 구성 요소(RYT 임대료, SHOP_RNT 매장임대료, CMS 수수료, SHOP_DEPRC_CST 감가상각비, CARD_CMS 카드수수료, LGT_STRG_CST 물류비용)를 구체적으로 분석
+- 채널별 특성을 반영한 분석 작성
+- 실행 가능한 구체적인 개선 방안 제시
+- 각 섹션은 독립적으로 읽을 수 있도록 작성하되, 전체적인 흐름을 유지
 
 {get_common_prompt_footer()}
 """
@@ -3620,7 +3817,7 @@ def analyze_store_profit(yyyymm, brd_cd):
         analysis_response = call_llm(prompt, max_tokens=4000)
         
         # JSON 파싱
-        analysis_data = parse_llm_json_response(analysis_response, "매장별 직접이익 분석 (당해 전년 주요변화)")
+        analysis_data = parse_llm_json_response(analysis_response, "AI 종합인사이트")
         
         # JSON 데이터 생성
         json_data = {
@@ -3636,24 +3833,34 @@ def analyze_store_profit(yyyymm, brd_cd):
                 'total_gross_profit': round(total_gross_profit / 1000000, 2),
                 'total_direct_cost': round(total_direct_cost / 1000000, 2),
                 'total_direct_profit': round(total_direct_profit / 1000000, 2),
-                'direct_profit_rate': round((total_direct_profit / total_sales * 100) if total_sales > 0 else 0, 1),
+                'direct_profit_rate': round((total_direct_profit / (total_sales / 1.1) * 100) if total_sales > 0 else 0, 2),
                 'unique_channels': unique_channels,
-                'unique_months': unique_months,
+                'unique_stores': unique_stores,
                 'analysis_period': f"{previous_year}년 {current_month}월 vs {current_year}년 {current_month}월"
             },
-            'channel_summary': channel_comparison,
+            'channel_summary': channel_summary,
+            'store_analysis': {
+                'top_stores': top_stores_formatted,
+                'low_stores': low_stores_formatted,
+                'improving_stores': improving_stores_formatted,
+                'declining_stores': declining_stores_formatted
+            },
             'raw_data': {
                 'sample_records': [
                     {
                         'PST_YYYYMM': r.get('PST_YYYYMM', ''),
-                        'PYCY': r.get('PYCY', ''),
                         'CHNL_NM': r.get('CHNL_NM', ''),
+                        'SHOP_CD': r.get('SHOP_CD', ''),
+                        'SHOP_NM': r.get('SHOP_NM', ''),
                         'ACT_SALE_AMT': round(float(r.get('ACT_SALE_AMT', 0)) / 1000000, 2),
                         'GROSS_PRFT': round(float(r.get('GROSS_PRFT', 0)) / 1000000, 2),
                         'DCST': round(float(r.get('DCST', 0)) / 1000000, 2),
-                        'DPRFT': round(float(r.get('DPRFT', 0)) / 1000000, 2)
+                        'DPRFT': round(float(r.get('DPRFT', 0)) / 1000000, 2),
+                        'RYT': round(float(r.get('RYT', 0)) / 1000000, 2),
+                        'SHOP_RNT': round(float(r.get('SHOP_RNT', 0)) / 1000000, 2),
+                        'CMS': round(float(r.get('CMS', 0)) / 1000000, 2)
                     }
-                    for r in records[:50]
+                    for r in records[:100]
                 ],
                 'total_records_count': len(records)
             }
@@ -3665,7 +3872,7 @@ def analyze_store_profit(yyyymm, brd_cd):
         save_json(json_data, filename)
         
         # Markdown도 저장 (analysis_data의 sections를 조합)
-        markdown_content = f"# {analysis_data.get('title', '매장별 직접이익 분석')}\n\n"
+        markdown_content = f"# {analysis_data.get('title', 'AI 종합인사이트')}\n\n"
         for section in analysis_data.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
@@ -5849,7 +6056,7 @@ if __name__ == '__main__':
     
     # 브랜드 선택 (원하는 브랜드만 주석 해제)
     brands_to_analyze = [
-        'M',   # MLB
+        # 'M',   # MLB
         'I',   # MLB KIDS
         'X',   # DISCOVERY
         'V',   # DUVETICA
