@@ -2945,7 +2945,7 @@ def analyze_category_profit(yyyymm, brd_cd):
 # 이 함수는 더 이상 사용되지 않습니다.
 
 def analyze_channel_sales_trend(yyyymm, brd_cd):
-    """채널별 매출 종합분석 (당해 1월~현재월) - 14-1-1-1"""
+    """채널별 매출 종합분석 (최근 12개월) - 14-1-1-1"""
     print(f"\n{'='*60}")
     print(f"채널별 매출 종합분석 시작 (14-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
     print(f"{'='*60}")
@@ -2954,14 +2954,24 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 현재월까지)
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         current_year = int(yyyymm[:4])
         current_month = int(yyyymm[4:6])
         
-        yyyymm_start = f"{current_year}01"  # 당해 1월
-        yyyymm_end = yyyymm  # 현재월
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지 (2025년 2월~2026년 1월)
+        if current_month == 12:
+            start_year = current_year
+            start_month = 1
+        else:
+            start_year = current_year - 1
+            start_month = current_month + 1
         
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
+        
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
         
         # SQL 쿼리 실행
         sql = get_channel_sales_query(yyyymm_start, yyyymm_end, brd_cd)
@@ -3267,7 +3277,7 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
         section_definitions = [
             {
                 'sub_title': '주요 인사이트',
-                'ai_text': '당해 1월~현재월까지의 매출 분석 결과를 구체적으로 3줄로 작성해줘. 각 줄은 다음 형식을 정확히 따르세요:\n• [최대 매출월] 최대 [금액]백만원 - [구체적 원인 또는 특징 설명]\n• [최소 매출월] 최저 [금액]백만원 - [구체적 원인 또는 특징 설명]\n• [턴어라운드 월] 회복 [금액]백만원 - [구체적 회복 요인 설명]\n위 "월별 매출 분석 결과"의 데이터를 바탕으로 각 월의 구체적인 특징과 원인을 포함하여 작성하세요.'
+                'ai_text': '최근 12개월의 매출 분석 결과를 구체적으로 3줄로 작성해줘. 각 줄은 다음 형식을 정확히 따르세요:\n• [최대 매출월] 최대 [금액]백만원 - [구체적 원인 또는 특징 설명]\n• [최소 매출월] 최저 [금액]백만원 - [구체적 원인 또는 특징 설명]\n• [턴어라운드 월] 회복 [금액]백만원 - [구체적 회복 요인 설명]\n위 "월별 매출 분석 결과"의 데이터를 바탕으로 각 월의 구체적인 특징과 원인을 포함하여 작성하세요.'
             },
             {
                 'sub_title': '채널 트렌드',
@@ -3292,7 +3302,7 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
         
         # LLM 프롬프트 생성 (JSON 형식 응답 요청)
         prompt = f"""
-너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 당해 1월부터 현재월까지의 채널별 매출 추이를 분석하여 채널별 성과와 아이템 포트폴리오 전략을 제시해야 해.
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 최근 12개월의 채널별 매출 추이를 분석하여 채널별 성과와 아이템 포트폴리오 전략을 제시해야 해.
 
 **분석 기간**
 - 시작: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월
@@ -3317,7 +3327,7 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
 {strategy_summary}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 당해 1월부터 현재월까지 채널별 매출 추이를 분석하여:
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 최근 12개월 채널별 매출 추이를 분석하여:
 1. 채널별 성과와 성장 패턴 파악
 2. 채널별 핵심 아이템(클래스3) 식별
 3. 채널별 매출 기여도와 비중 분석
@@ -3330,7 +3340,7 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
 아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
 
 {{
-  "title": "채널별 매출 종합분석 (당해 1월~현재월)",
+  "title": "채널별 매출 종합분석 (최근 12개월)",
   "sections": [
     {sections_template}
   ]
@@ -3368,7 +3378,7 @@ def analyze_channel_sales_trend(yyyymm, brd_cd):
         analysis_response = call_llm(prompt, max_tokens=4000)
         
         # JSON 파싱
-        analysis_data = parse_llm_json_response(analysis_response, "채널별 매출 종합분석 (당해 1월~현재월)")
+        analysis_data = parse_llm_json_response(analysis_response, "채널별 매출 종합분석 (최근 12개월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -5023,27 +5033,21 @@ def analyze_store_efficiency_overall(yyyymm, brd_cd):
     finally:
         engine.dispose()
 
-def get_item_sales_overall_query(yyyymm, brd_cd):
-    """아이템별 매출 종합분석 쿼리 (당해 1월~현재월)"""
-    # 분석 기간 계산
-    current_year = int(yyyymm[:4])
-    current_month = int(yyyymm[4:6])
-    previous_year = current_year - 1
-    
-    year_start = f"{current_year}01"  # 당해 1월
-    year_start_py = f"{previous_year}01"  # 전년 1월
-    yyyymm_py = f"{previous_year}{current_month:02d}"  # 전년 동월
-    
-    # 현재 날짜 문자열 (시즌 계산용)
+def get_item_sales_overall_query(yyyymm_start, yyyymm_end, brd_cd):
+    """아이템별 매출 종합분석 쿼리 (최근 12개월: yyyymm_end 기준 12개월, 예: 202601 → 202502~202601)"""
+    # 설정한 달(yyyymm_end) 기준 최근 12개월 사용. 전년 동일 기간은 1년 전
+    current_year = int(yyyymm_end[:4])
+    current_month = int(yyyymm_end[4:6])
+    year_start_py = f"{int(yyyymm_start[:4]) - 1}{yyyymm_start[4:6]}"
+    yyyymm_py = f"{int(yyyymm_end[:4]) - 1}{yyyymm_end[4:6]}"
+
     current_date_str = f"{current_year}-{current_month:02d}-01"
-    
-    # -6개월 계산
     current_date = datetime(current_year, current_month, 1)
-    minus6_date = current_date - timedelta(days=180)  # 약 6개월
+    minus6_date = current_date - timedelta(days=180)
     minus6_yyyymm = minus6_date.strftime('%Y%m')
-    minus18_date = current_date - timedelta(days=540)  # 약 18개월
+    minus18_date = current_date - timedelta(days=540)
     minus18_yyyymm = minus18_date.strftime('%Y%m')
-    
+
     return f"""
     WITH cy_item as (
         select a.prdt_cd
@@ -5051,11 +5055,11 @@ def get_item_sales_overall_query(yyyymm, brd_cd):
             , a.prdt_hrrc1_nm
             , a.prdt_hrrc2_nm
             , a.prdt_hrrc3_nm
-            , case when ('{yyyymm}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류'
+            , case when ('{yyyymm_end}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류'
                         then decode(a.sesn, 'N', 'S', a.sesn) || ' ' || a.prdt_hrrc1_nm -- 당시즌 의류
                     when ('{minus6_yyyymm}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류' -- -6개월
                         then decode(a.sesn, 'N', 'S', a.sesn) || ' ' || a.prdt_hrrc1_nm-- 전시즌 의류
-                    when (b.start_yyyymm > '{yyyymm}') and prdt_hrrc1_nm = '의류'
+                    when (b.start_yyyymm > '{yyyymm_end}') and prdt_hrrc1_nm = '의류'
                         then '차기시즌 의류'
                     when (b.start_yyyymm < '{minus6_yyyymm}') and prdt_hrrc1_nm = '의류' -- -6개월
                         then '과시즌 의류'
@@ -5125,7 +5129,7 @@ def get_item_sales_overall_query(yyyymm, brd_cd):
         and a.brd_cd = '{brd_cd}'
         and a.corp_cd = '1000'
         and b.chnl_cd not in ('0','8', '9', '99')
-        and a.pst_yyyymm between '{year_start}' and '{yyyymm}'
+        and a.pst_yyyymm between '{yyyymm_start}' and '{yyyymm_end}'
         group by 1, 2, 3, 4
         union all
         select 'py' as div
@@ -5261,7 +5265,7 @@ def get_item_sales_overall_query(yyyymm, brd_cd):
     """
 
 def analyze_item_sales_trend(yyyymm, brd_cd):
-    """아이템별 매출 종합분석 (당해 1월~현재월) - 15-1-1-1"""
+    """아이템별 매출 종합분석 (최근 12개월) - 15-1-1-1"""
     print(f"\n{'='*60}")
     print(f"아이템별 매출 종합분석 시작 (15-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
     print(f"{'='*60}")
@@ -5270,17 +5274,27 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 현재월까지)
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         current_year = int(yyyymm[:4])
         current_month = int(yyyymm[4:6])
         
-        yyyymm_start = f"{current_year}01"  # 당해 1월
-        yyyymm_end = yyyymm  # 현재월
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지 (2025년 2월~2026년 1월)
+        if current_month == 12:
+            start_year = current_year
+            start_month = 1
+        else:
+            start_year = current_year - 1
+            start_month = current_month + 1
         
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
         
-        # SQL 쿼리 실행
-        sql = get_item_sales_overall_query(yyyymm, brd_cd)
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
+        
+        # SQL 쿼리 실행 (설정한 달 기준 최근 12개월: yyyymm_start ~ yyyymm_end)
+        sql = get_item_sales_overall_query(yyyymm_start, yyyymm_end, brd_cd)
         df = run_query(sql, engine)
         records = df.to_dicts()
         
@@ -5374,7 +5388,7 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
         
         # LLM 프롬프트 생성
         prompt = f"""
-너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 아이템 전략 전문가야. 당해 1월부터 현재월까지의 아이템별 매출 추이를 분석하여 시즌 트렌드와 카테고리별 성과를 분석하고 판매율 향상을 위한 전략을 제시해야 해.
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 아이템 전략 전문가야. 최근 12개월의 아이템별 매출 추이를 분석하여 시즌 트렌드와 카테고리별 성과를 분석하고 판매율 향상을 위한 전략을 제시해야 해.
 
 **분석 기간**
 - 시작: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월
@@ -5391,7 +5405,7 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
 {json_dumps_safe(category_items, ensure_ascii=False, indent=2)}
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 당해 1월부터 현재월까지 아이템별 매출 추이를 분석하여:
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 최근 12개월 아이템별 매출 추이를 분석하여:
 1. 시즌별(F시즌, S시즌, 과시즌 의류) 트렌드와 성과 분석
 2. 카테고리별(모자, 신발, 가방, 기타ACC) 성과와 성장 패턴 파악
 3. 판매율을 높이기 위한 구체적이고 실행 가능한 전략 3가지 제시
@@ -5400,7 +5414,7 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
 아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
 
 {{
-  "title": "아이템별 매출 종합분석 (당해 1월~현재월)",
+  "title": "아이템별 매출 종합분석 (최근 12개월)",
   "sections": [
     {{
       "div": "종합분석-1",
@@ -5456,7 +5470,7 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
         analysis_response = call_llm(prompt, max_tokens=4000)
         
         # JSON 파싱
-        analysis_data = parse_llm_json_response(analysis_response, "아이템별 매출 종합분석 (당해 1월~현재월)")
+        analysis_data = parse_llm_json_response(analysis_response, "아이템별 매출 종합분석 (최근 12개월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -5498,7 +5512,7 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
         save_json(json_data, filename)
         
         # Markdown 파일 생성
-        markdown_content = f"# {analysis_data.get('title', '아이템별 매출 종합분석 (당해 1월~현재월)')}\n\n"
+        markdown_content = f"# {analysis_data.get('title', '아이템별 매출 종합분석 (최근 12개월)')}\n\n"
         for section in analysis_data.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
@@ -5510,27 +5524,20 @@ def analyze_item_sales_trend(yyyymm, brd_cd):
     finally:
         engine.dispose()
 
-def get_item_stock_overall_query(yyyymm, brd_cd):
-    """아이템별 재고 종합분석 쿼리 (당해 1월~현재월)"""
-    # 분석 기간 계산
-    current_year = int(yyyymm[:4])
-    current_month = int(yyyymm[4:6])
-    previous_year = current_year - 1
-    
-    year_start = f"{current_year}01"  # 당해 1월
-    year_start_py = f"{previous_year}01"  # 전년 1월
-    yyyymm_py = f"{previous_year}{current_month:02d}"  # 전년 동월
-    
-    # 현재 날짜 문자열 (시즌 계산용)
+def get_item_stock_overall_query(yyyymm_start, yyyymm_end, brd_cd):
+    """아이템별 재고 종합분석 쿼리 (최근 12개월: yyyymm_end 기준 12개월, 예: 202601 → 202502~202601)"""
+    current_year = int(yyyymm_end[:4])
+    current_month = int(yyyymm_end[4:6])
+    year_start_py = f"{int(yyyymm_start[:4]) - 1}{yyyymm_start[4:6]}"
+    yyyymm_py = f"{int(yyyymm_end[:4]) - 1}{yyyymm_end[4:6]}"
+
     current_date_str = f"{current_year}-{current_month:02d}-01"
-    
-    # -6개월 계산
     current_date = datetime(current_year, current_month, 1)
-    minus6_date = current_date - timedelta(days=180)  # 약 6개월
+    minus6_date = current_date - timedelta(days=180)
     minus6_yyyymm = minus6_date.strftime('%Y%m')
-    minus18_date = current_date - timedelta(days=540)  # 약 18개월
+    minus18_date = current_date - timedelta(days=540)
     minus18_yyyymm = minus18_date.strftime('%Y%m')
-    
+
     return f"""
     WITH cy_item as (
         select a.prdt_cd  
@@ -5538,11 +5545,11 @@ def get_item_stock_overall_query(yyyymm, brd_cd):
                 , a.prdt_hrrc1_nm
                 , a.prdt_hrrc2_nm
                 , a.prdt_hrrc3_nm
-                , case when ('{yyyymm}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류' 
+                , case when ('{yyyymm_end}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류' 
                             then decode(a.sesn, 'N', 'S', a.sesn) || ' ' || a.prdt_hrrc1_nm -- 당시즌 의류
                         when ('{minus6_yyyymm}' between b.start_yyyymm and b.end_yyyymm) and prdt_hrrc1_nm = '의류' -- -6개월
                             then decode(a.sesn, 'N', 'S', a.sesn) || ' ' || a.prdt_hrrc1_nm-- 전시즌 의류
-                        when (b.start_yyyymm > '{yyyymm}') and prdt_hrrc1_nm = '의류' 
+                        when (b.start_yyyymm > '{yyyymm_end}') and prdt_hrrc1_nm = '의류' 
                             then '차기시즌 의류'
                         when (b.start_yyyymm < '{minus6_yyyymm}') and prdt_hrrc1_nm = '의류' -- -6개월
                             then '과시즌 의류'
@@ -5603,7 +5610,7 @@ def get_item_stock_overall_query(yyyymm, brd_cd):
         on a.prdt_cd = b.prdt_cd
         where 1=1 
         and a.brd_cd = '{brd_cd}'
-        and a.yyyymm between '{year_start}' and '{yyyymm}'
+        and a.yyyymm between '{yyyymm_start}' and '{yyyymm_end}'
         group by a.yyyymm, b.item_std
         -- 전년
         union all
@@ -5634,7 +5641,7 @@ def get_item_stock_overall_query(yyyymm, brd_cd):
     """
 
 def analyze_item_stock_trend(yyyymm, brd_cd):
-    """아이템별 재고 종합분석 (당해 1월~현재월) - 16-1-1-1"""
+    """아이템별 재고 종합분석 (최근 12개월) - 16-1-1-1"""
     print(f"\n{'='*60}")
     print(f"아이템별 재고 종합분석 시작 (16-1-1-1): {BRAND_CODE_MAP.get(brd_cd, brd_cd)} ({yyyymm})")
     print(f"{'='*60}")
@@ -5643,17 +5650,27 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 현재월까지)
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         current_year = int(yyyymm[:4])
         current_month = int(yyyymm[4:6])
         
-        yyyymm_start = f"{current_year}01"  # 당해 1월
-        yyyymm_end = yyyymm  # 현재월
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지 (2025년 2월~2026년 1월)
+        if current_month == 12:
+            start_year = current_year
+            start_month = 1
+        else:
+            start_year = current_year - 1
+            start_month = current_month + 1
         
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
         
-        # SQL 쿼리 실행
-        sql = get_item_stock_overall_query(yyyymm, brd_cd)
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
+        
+        # SQL 쿼리 실행 (설정한 달 기준 최근 12개월: yyyymm_start ~ yyyymm_end)
+        sql = get_item_stock_overall_query(yyyymm_start, yyyymm_end, brd_cd)
         df = run_query(sql, engine)
         records = df.to_dicts()
         
@@ -5823,7 +5840,7 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
         
         # LLM 프롬프트 생성
         prompt = f"""
-너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 재고 관리 전문가야. 당해 1월부터 현재월까지의 아이템별 재고 추이를 분석하여 조기경보, 긍정신호, 인사이트를 제시해야 해.
+너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 재고 관리 전문가야. 최근 12개월의 아이템별 재고 추이를 분석하여 조기경보, 긍정신호, 인사이트를 제시해야 해.
 
 **분석 기간**
 - 시작: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월
@@ -5850,7 +5867,7 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
 - 최저점 월: {min_total_month['yyyymm'] if min_total_month else 'N/A'} ({min_total_month['total_stock'] if min_total_month else 0}백만원)
 
 <분석 목표>
-{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 당해 1월부터 현재월까지 아이템별 재고 추이를 분석하여:
+{BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드의 최근 12개월 아이템별 재고 추이를 분석하여:
 1. 조기경보: 재고 증가, 최대 재고액, 수치 악화 분석
 2. 긍정신호: 재고 감소, 재고금액 감소 분석
 3. 인사이트: 총 재고액, 재고가 감소한 월, 증가한 월 분석
@@ -5859,7 +5876,7 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
 아래 JSON 형식으로 분석 결과를 반환해줘. 반드시 유효한 JSON 형식이어야 하고, 마크다운 코드 블록 없이 순수 JSON만 반환해줘.
 
 {{
-  "title": "아이템별 재고 종합분석 (당해 1월~현재월)",
+  "title": "아이템별 재고 종합분석 (최근 12개월)",
   "sections": [
     {{
       "div": "종합분석-1",
@@ -5914,7 +5931,7 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
         analysis_response = call_llm(prompt, max_tokens=4000)
         
         # JSON 파싱
-        analysis_data = parse_llm_json_response(analysis_response, "아이템별 재고 종합분석 (당해 1월~현재월)")
+        analysis_data = parse_llm_json_response(analysis_response, "아이템별 재고 종합분석 (최근 12개월)")
         
         # JSON 데이터 생성
         # yyyymm_py 계산 (전년 동월)
@@ -5964,7 +5981,7 @@ def analyze_item_stock_trend(yyyymm, brd_cd):
         save_json(json_data, filename)
         
         # Markdown 파일 생성
-        markdown_content = f"# {analysis_data.get('title', '아이템별 재고 종합분석 (당해 1월~현재월)')}\n\n"
+        markdown_content = f"# {analysis_data.get('title', '아이템별 재고 종합분석 (최근 12개월)')}\n\n"
         for section in analysis_data.get('sections', []):
             markdown_content += f"## {section.get('sub_title', '')}\n\n"
             markdown_content += f"{section.get('ai_text', '')}\n\n"
@@ -6041,7 +6058,7 @@ if __name__ == '__main__':
     # 분석 기간 설정
     # ========================================================================
     # 방법 1: 한 달만 분석
-    yyyymm_list = generate_yyyymm_list('202512')
+    yyyymm_list = generate_yyyymm_list('202602')
     
     # 방법 2: 여러 달 분석 (2024년 1월 ~ 2025년 10월)
     # yyyymm_list = generate_yyyymm_list('202407', '202508')
@@ -6056,7 +6073,7 @@ if __name__ == '__main__':
     
     # 브랜드 선택 (원하는 브랜드만 주석 해제)
     brands_to_analyze = [
-        # 'M',   # MLB
+        'M',   # MLB
         'I',   # MLB KIDS
         'X',   # DISCOVERY
         'V',   # DUVETICA
@@ -6077,16 +6094,16 @@ if __name__ == '__main__':
             
             try:
                 # 분석 실행 (원하는 분석만 주석 해제)
-                # analyze_channel_sales(yyyymm, brd_cd)  # 실판매출_채널별매출분석
-                # analyze_gender_product_comprehensive(yyyymm, brd_cd)  # 성별 제품별 통합 분석 (남성/여성/공용 + 종합)
-                # analyze_category_profit(yyyymm, brd_cd)  # 영업이익_아이템별직접이익
+                analyze_channel_sales(yyyymm, brd_cd)  # 실판매출_채널별매출분석
+                analyze_gender_product_comprehensive(yyyymm, brd_cd)  # 성별 제품별 통합 분석 (남성/여성/공용 + 종합)
+                analyze_category_profit(yyyymm, brd_cd)  # 영업이익_아이템별직접이익
                 analyze_store_profit(yyyymm, brd_cd)  # 영업이익_매장별직접이익
-                # analyze_operating_expense(yyyymm, brd_cd)  # 영업비_각 계정별 분석
-                # analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석
-                # analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석
-                # analyze_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출추세 (당해 1월~현재월)
-                # analyze_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출추세 (당해 1월~현재월)
-                # analyze_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고추세 (당해 1월~현재월)
+                analyze_operating_expense(yyyymm, brd_cd)  # 영업비_각 계정별 분석
+                analyze_discount_rate_overall(yyyymm, brd_cd)  # 할인율 종합분석
+                analyze_store_efficiency_overall(yyyymm, brd_cd)  # 매장효율성 종합분석
+                analyze_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출추세 (최근 12개월)
+                analyze_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출추세 (최근 12개월)
+                analyze_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고추세 (최근 12개월)
             except Exception as e:
                 print(f"[ERROR] 브랜드 {brd_cd} 분석 중 오류 발생: {e}")
                 print(f"[ERROR] 다음 브랜드로 계속 진행합니다...\n")

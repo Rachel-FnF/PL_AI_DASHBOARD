@@ -165,13 +165,18 @@ def call_llm(prompt, max_tokens=4000, temperature=0.7):
     
     full_prompt = system_prompt + "\n\n" + prompt
     
-    print(f"[LLM] Claude API 호출 중...")
-    message = client.messages.create(
-        model='claude-sonnet-4-20250514',
-        max_tokens=max_tokens,
-        temperature=temperature,
-        messages=[{"role": "user", "content": full_prompt}]
-    )
+    print(f"[LLM] Claude API 호출 중... (timeout: 120초)")
+    try:
+        message = client.messages.create(
+            model='claude-sonnet-4-20250514',
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": full_prompt}],
+            timeout=120.0
+        )
+    except Exception as e:
+        print(f"[ERROR] LLM API 호출 실패: {e}")
+        raise
     
     # 토큰 사용량 추적
     if hasattr(message, 'usage') and message.usage:
@@ -749,7 +754,10 @@ SELECT A.YYMM AS YYYYMM
      , C.MGMT_CHNL_NM AS CHNL_NM
      , SUM(A.SALE_TAG_AMT) AS TAG_SALE_AMT
      , SUM(A.SALE_AMT) AS ACT_SALE_AMT
-     , CASE WHEN SUM(A.SALE_AMT) = 0 THEN 0 ELSE ROUND((1 - SUM(A.SALE_AMT) / SUM(A.SALE_TAG_AMT))*100, 1) END AS DISCOUNT_PCT
+     , CASE 
+         WHEN SUM(A.SALE_TAG_AMT) = 0 OR SUM(A.SALE_AMT) = 0 THEN 0 
+         ELSE ROUND((1 - SUM(A.SALE_AMT) / SUM(A.SALE_TAG_AMT))*100, 1) 
+       END AS DISCOUNT_PCT
 FROM CHN.DM_SH_S_M A
     JOIN PARAM
             ON PARAM.DIV = 'CY'
@@ -2749,18 +2757,27 @@ def analyze_monthly_channel_sales_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 지정한 연월까지)
-        # 함수 파라미터 yyyymm은 분석 종료점으로 사용
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         analysis_year = int(yyyymm[:4])
         analysis_month = int(yyyymm[4:6])
+        
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지
+        if analysis_month == 12:
+            start_year = analysis_year - 1
+            start_month = 1
+        else:
+            start_year = analysis_year - 1
+            start_month = analysis_month + 1
+        
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
         
         previous_year = analysis_year - 1
         yyyymm_py = f"{previous_year:04d}{analysis_month:02d}"
         
-        yyyymm_start = f"{analysis_year}01"  # 분석 시작년도 1월
-        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
-        
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
         
         # SQL 쿼리 실행
         sql = f"""
@@ -2862,7 +2879,7 @@ ORDER BY A.YYMM DESC, CHNL_CD, SALE_AMT DESC
         prompt = f"""
 너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 채널 전략 전문가야. 월별 채널별 매출 추세 분석을 수행해줘.
 
-**분석 기간**: {analysis_year}년 1월 ~ {analysis_year}년 {analysis_month}월 ({yyyymm_start}~{yyyymm_end})
+**분석 기간**: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 ({yyyymm_start}~{yyyymm_end}) (최근 12개월)
 
 **월별 총 매출 추이** (모든 금액은 k 단위):
 {json_dumps_safe(monthly_totals_k, ensure_ascii=False, indent=2)}
@@ -2933,7 +2950,7 @@ ORDER BY A.YYMM DESC, CHNL_CD, SALE_AMT DESC
                 'total_sales': round(total_sales / 1000, 0),
                 'unique_channels': unique_channels,
                 'unique_months': unique_months,
-                'analysis_period': f"{analysis_year}년 01월 ~ {analysis_year}년 {analysis_month:02d}월"
+                'analysis_period': f"{yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)"
             },
             'monthly_totals': monthly_totals_k,
             'channel_summary': channel_summary_sorted,
@@ -2971,24 +2988,31 @@ def analyze_monthly_item_sales_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 11월까지)
-        # 함수 파라미터 yyyymm은 분석 시작점으로만 사용
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         analysis_year = int(yyyymm[:4])
         analysis_month = int(yyyymm[4:6])
         
-        # 실제 당해 당월 계산 (현재 날짜 기준)
-        now = datetime.now()
-        current_year = now.year
-        current_month = now.month
-        current_yyyymm = f"{current_year:04d}{current_month:02d}"
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지
+        if analysis_month == 12:
+            start_year = analysis_year - 1
+            start_month = 1
+        else:
+            start_year = analysis_year - 1
+            start_month = analysis_month + 1
         
-        previous_year = current_year - 1
-        yyyymm_py = f"{analysis_year:04d}{analysis_month:02d}"
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
         
-        yyyymm_start = f"{analysis_year}01"  # 분석 시작년도 1월
-        yyyymm_end = f"{analysis_year}{analysis_month}"  # 당해 11월까지
+        previous_year = analysis_year - 1
+        yyyymm_py = f"{previous_year:04d}{analysis_month:02d}"
         
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        # 프롬프트에서 사용할 변수 정의
+        current_year = analysis_year
+        current_month = analysis_month
+        
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
         
         # SQL 쿼리 실행
         sql = f"""
@@ -3162,7 +3186,7 @@ order by a.yymm
         prompt = f"""
 너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 상품 기획 전문가야. 월별 아이템별 매출 추세 분석을 수행해줘.
 
-**분석 기간**: {current_year}년 1월 ~ {current_year}년 {current_month}월 ({yyyymm_start}~{yyyymm_end})
+**분석 기간**: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 ({yyyymm_start}~{yyyymm_end}) (최근 12개월)
 
 **월별 총 매출 추이** (모든 금액은 k 단위):
 {json_dumps_safe(monthly_totals_k, ensure_ascii=False, indent=2)}
@@ -3234,7 +3258,7 @@ order by a.yymm
                 'total_sales': round(total_sales / 1000, 0),
                 'unique_months': unique_months,
                 'unique_items': unique_items,
-                'analysis_period': f"{current_year}년 01월 ~ {current_year}년 {current_month:02d}월"
+                'analysis_period': f"{yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)"
             },
             'monthly_totals': monthly_totals_k,
             'season_items': season_items,
@@ -3273,24 +3297,31 @@ def analyze_monthly_item_stock_trend(yyyymm, brd_cd):
     engine = get_db_engine()
     
     try:
-        # 분석 기간 계산 (당해 1월부터 현재월까지)
-        # 함수 파라미터 yyyymm은 분석 시작점으로만 사용
+        # 분석 기간 계산 (최근 12개월)
+        # 함수 파라미터 yyyymm을 기준으로 최근 12개월 계산
         analysis_year = int(yyyymm[:4])
         analysis_month = int(yyyymm[4:6])
         
-        # 실제 당해 당월 계산 (현재 날짜 기준)
-        now = datetime.now()
-        current_year = now.year
-        current_month = now.month
-        current_yyyymm = f"{analysis_year:04d}{current_month:02d}"
+        # 최근 12개월 계산 (yyyymm 포함하여 12개월 전까지)
+        # 예: 202601 -> 202502부터 202601까지
+        if analysis_month == 12:
+            start_year = analysis_year - 1
+            start_month = 1
+        else:
+            start_year = analysis_year - 1
+            start_month = analysis_month + 1
+        
+        yyyymm_start = f"{start_year:04d}{start_month:02d}"
+        yyyymm_end = yyyymm  # 함수 파라미터로 지정한 연월
         
         previous_year = analysis_year - 1
         yyyymm_py = f"{previous_year:04d}{analysis_month:02d}"
         
-        yyyymm_start = f"{analysis_year}01"  # 분석 시작년도 1월
-        yyyymm_end = yyyymm  # 실제 당해 당월
+        # 프롬프트에서 사용할 변수 정의
+        current_year = analysis_year
+        current_month = analysis_month
         
-        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월")
+        print(f"분석 기간: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)")
         
         # SQL 쿼리 실행
         sql = f"""
@@ -3500,7 +3531,7 @@ order by yyyymm
         prompt = f"""
 너는 F&F 그룹의 {BRAND_CODE_MAP.get(brd_cd, brd_cd)} 브랜드 재고 관리 전문가야. 월별 아이템별 재고 추세 분석을 수행해줘.
 
-**분석 기간**: {current_year}년 1월 ~ {current_year}년 {current_month}월 ({yyyymm_start}~{yyyymm_end})
+**분석 기간**: {yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 ({yyyymm_start}~{yyyymm_end}) (최근 12개월)
 
 **월별 총 재고 추이** (모든 금액은 k 단위):
 {json_dumps_safe(monthly_totals_k, ensure_ascii=False, indent=2)}
@@ -3574,7 +3605,7 @@ order by yyyymm
                 'total_stock': round(total_stock / 1000, 0),
                 'unique_months': unique_months,
                 'unique_items': unique_items,
-                'analysis_period': f"{current_year}년 01월 ~ {current_year}년 {current_month:02d}월"
+                'analysis_period': f"{yyyymm_start[:4]}년 {yyyymm_start[4:6]}월 ~ {yyyymm_end[:4]}년 {yyyymm_end[4:6]}월 (최근 12개월)"
             },
             'monthly_totals': monthly_totals_k,
             'item_stock_data': item_stock_k,
@@ -3654,7 +3685,7 @@ if __name__ == '__main__':
     # 분석 기간 설정
     # ========================================================================
     # 방법 1: 한 달만 분석
-    yyyymm_list = generate_yyyymm_list('202512')
+    yyyymm_list = generate_yyyymm_list('202602')
     
     # 방법 2: 여러 달 분석 (2024년 1월 ~ 2025년 10월)
     # yyyymm_list = generate_yyyymm_list('202501', '202510')
@@ -3669,12 +3700,11 @@ if __name__ == '__main__':
     
     # 브랜드 선택 (원하는 브랜드만 주석 해제)
     brands_to_analyze = [
-        # 'M',   # MLB
+        'M',   # MLB
         'I',   # MLB KIDS
-        # 'X',   # DISCOVERY
-        # 'V',   # DUVETICA
-        # 'ST',  # SERGIO TACCHINI
-        # 'W',   # SUPRA
+        'X',   # DISCOVERY
+        'V',   # DUVETICA
+        'W',   # SUPRA
     ]
     
     # 기간별, 브랜드별 분석 실행
@@ -3690,14 +3720,14 @@ if __name__ == '__main__':
             
             try:
                 # 분석 실행 (원하는 분석만 주석 해제)
-                # analyze_retail_channel_top3_sales(yyyymm, brd_cd)  # 리테일매출 채널별 TOP3 분석 (완료)
+                analyze_retail_channel_top3_sales(yyyymm, brd_cd)  # 리테일매출 채널별 TOP3 분석 (완료)
                 analyze_outbound_category_sales(yyyymm, brd_cd)  # 출고매출 카테고리별 분석 (완료)
-                # analyze_agent_store_sales(yyyymm, brd_cd)  # 대리상 점당매출 종합분석
-                # analyze_discount_rate(yyyymm, brd_cd)  # 할인율 종합분석 (완료)
-                # analyze_operating_expense(yyyymm, brd_cd)  # 영업비 종합분석 (완료)
-                # analyze_monthly_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출 추세 분석 (완료)
-                # analyze_monthly_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출 추세 분석
-                # analyze_monthly_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고 추세 분석 (완료)
+                analyze_agent_store_sales(yyyymm, brd_cd)  # 대리상 점당매출 종합분석
+                analyze_discount_rate(yyyymm, brd_cd)  # 할인율 종합분석 (완료)
+                analyze_operating_expense(yyyymm, brd_cd)  # 영업비 종합분석 (완료)
+                analyze_monthly_channel_sales_trend(yyyymm, brd_cd)  # 월별 채널별 매출 추세 분석 (완료)
+                analyze_monthly_item_sales_trend(yyyymm, brd_cd)  # 월별 아이템별 매출 추세 분석
+                analyze_monthly_item_stock_trend(yyyymm, brd_cd)  # 월별 아이템별 재고 추세 분석 (완료)
                 pass  # 주석 처리된 함수가 없을 경우를 위한 pass
             except Exception as e:
                 print(f"[ERROR] 브랜드 {brd_cd} 분석 중 오류 발생: {e}")
